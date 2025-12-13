@@ -7,8 +7,8 @@ use_bnn: True
 rank: 2
 
 # Parameters for iterative updating algorithm
-z_dim: 3
-x_dim: 10
+z_dim: 10
+x_dim: 100
 lr_theta: 0.005
 lr_z: 0.005
 g_units: [64,64,64,64,64]
