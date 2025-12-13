@@ -439,16 +439,13 @@ class BGM_IMG(object):
 
         return data_x_pred
 
-    def predict(self, data, ind_x1=None, alpha=0.05, bs=100, n_mcmc=5000, burn_in=5000, step_size=0.01, num_leapfrog_steps=10, seed=42):
+    def predict(self, data, alpha=0.05, bs=100, n_mcmc=5000, burn_in=5000, step_size=0.01, num_leapfrog_steps=10, seed=42):
         """
         Predict the posterior distribution of P(x2|x1) for MNIST images.
         
         Args:
-            data: Observed data (flattened) with shape (n, p) where p = 28*28 - len(ind_x1) if ind_x1 is not None
-                  Contains only the conditioned pixel values
-                  If ind_x1 is None, data should be full flattened image (n, 784)
-            ind_x1: List of pixel indices (flattened, 0-indexed) that are conditioned in 'data'
-                    If None, no conditioning is applied
+            data:  Observed data with shape (n, 28, 28, 1).
+                    Missing pixels are encoded as np.nan.
             alpha: Significance level for prediction intervals
             bs: Batch size for processing
             n_mcmc: Number of MCMC samples to retain
@@ -459,66 +456,137 @@ class BGM_IMG(object):
             
         Returns:
             Tuple of (data_x_pred, pred_interval):
-            - data_x_pred: Flattened predicted samples
-                          Shape: (n_mcmc, n, 28*28) if ind_x1 is None
-                          Shape: (n_mcmc, n, 28*28 - len(ind_x1)) if ind_x1 is not None
+            - data_x_pred: Imputed images with same shape as input:
+                    (n_mcmc, n, 28, 28, 1)
+                    Observed pixels are kept at their original values;
+                    missing pixels are replaced by imputed samples.
             - pred_interval: Prediction intervals
-                            Shape: (n, 28*28, 2) if ind_x1 is None
-                            Shape: (n, 28*28 - len(ind_x1), 2) if ind_x1 is not None
+                            (np.ndarray) Shape: (n, N_missed_pixels, 2) if all test samples share the same missing pattern
+                            (list) Shape: list with length n where pred_interval[i] has shape (N_missed_pixels_i, 2)
                             Last dimension is [lower, upper]
         """
         assert 0 < alpha < 1, "The significance level 'alpha' must be greater than 0 and less than 1."
 
+        if not isinstance(data, tf.Tensor):
+            data_tf = tf.convert_to_tensor(data, dtype=tf.float32)
+        else:
+            data_tf = tf.cast(data, tf.float32)
+
+        # Shape: (n, 28, 28, 1)
+        n_data_samples = data_tf.shape[0]
+
+        # Boolean mask of missingness (True where NaN)
+        is_nan_tf = tf.math.is_nan(data_tf)
+        # Observed mask (True where not NaN)
+        is_obs_tf = tf.logical_not(is_nan_tf)
+
+        # We'll still feed some numeric value at missing locations; they are ignored via indices.
+        data_clean_tf = tf.where(is_nan_tf,
+                                 tf.zeros_like(data_tf),
+                                 data_tf)
+
+        # Flatten observed mask to build per-sample index lists
+        is_obs_flat_tf = tf.reshape(is_obs_tf, [n_data_samples, -1])
+        is_obs_flat_np = is_obs_flat_tf.numpy()
+
+        # Build ind_x1 as list-of-lists of observed pixel indices
+        ind_x1_list = [
+            np.where(row)[0].tolist()
+            for row in is_obs_flat_np
+        ]
+        
         data_posterior_z = self.tfp_mcmc_sampler(
-            data=data,
-            ind_x1=ind_x1,
+            data=data_clean_tf,
+            ind_x1=ind_x1_list,
             n_mcmc=n_mcmc,
             burn_in=burn_in,
             step_size=step_size,
             num_leapfrog_steps=num_leapfrog_steps,
             seed=seed
         )
-
-        data_x_pred = []
-        # Iterate over the data_posterior_z in batches
-        for i in range(0, data_posterior_z.shape[1], bs):
-            batch_posterior_z = data_posterior_z[:,i:i + bs,:]
+        # data_posterior_z: (n_mcmc, n_data_samples, z_dim)
+        data_x_pred_all = []
+        
+        # Loop over data dimension in batches
+        for i in range(0, n_data_samples, bs):
+            batch_posterior_z = data_posterior_z[:, i:i + bs, :]  # (n_mcmc, bs_i, z_dim)
             data_x_batch_pred = self.predict_on_posteriors(batch_posterior_z)
+            # Expected shape: (n_mcmc, bs_i, 28, 28, 1)
             data_x_batch_pred = data_x_batch_pred.numpy()
-            data_x_pred.append(data_x_batch_pred)
+            data_x_pred_all.append(data_x_batch_pred)
 
-        data_x_pred = np.concatenate(data_x_pred, axis=1)
+        # Concatenate along data dimension
+        data_x_pred_all = np.concatenate(data_x_pred_all, axis=1)
+        # Shape: (n_mcmc, n_data_samples, 28, 28, 1)
+        
+        data_np = data_tf.numpy()
+        miss_mask_full = np.isnan(data_np).astype(np.float32)
+        obs_mask_full = 1.0 - miss_mask_full
+        data_obs_np = np.nan_to_num(data_np, nan=0.0)
 
-        # Compute prediction intervals
-        # Compute quantiles along the MCMC dimension (axis=0)
-        pred_interval_upper = np.quantile(data_x_pred, 1-alpha/2, axis=0)
-        pred_interval_lower = np.quantile(data_x_pred, alpha/2, axis=0)
-        pred_interval = np.stack([pred_interval_lower, pred_interval_upper], axis=-1)
+        # Broadcast masks and observed data across MCMC dimension
+        # data_x_pred_all: (n_mcmc, n, 28, 28, 1)
+        data_x_pred_imputed = (
+            miss_mask_full[None, ...] * data_x_pred_all +
+            obs_mask_full[None, ...]  * data_obs_np[None, ...]
+        )
+                
+        # Compute prediction intervals on missing pixels only
+        n_mcmc_samples = data_x_pred_imputed.shape[0]
+        flat_pred = data_x_pred_imputed.reshape(n_mcmc_samples,
+                                                n_data_samples,
+                                                -1)           # (n_mcmc, n, 784)
 
-        # # Always flatten predictions: data_x_pred has shape (n_mcmc, n, 28, 28, 1)
-        # n_mcmc_samples = data_x_pred.shape[0]
-        # n_data_samples = data_x_pred.shape[1]
-        # data_x_pred_flat = data_x_pred.reshape(n_mcmc_samples, n_data_samples, -1)  # (n_mcmc, n, 784)
-        # pred_interval_flat = pred_interval.reshape(n_data_samples, -1, 2)  # (n, 784, 2)
+        miss_mask_flat = miss_mask_full.reshape(n_data_samples, -1).astype(bool)
 
-        return data_x_pred, pred_interval
+        # Check if all samples share the same missing pattern
+        same_pattern = np.all(miss_mask_flat == miss_mask_flat[0])
+
+        if same_pattern:
+            # Common missing pattern across all samples
+            miss_idx = np.where(miss_mask_flat[0])[0]  # (N_missed_pixels,)
+            if miss_idx.size == 0:
+                # No missing pixels at all
+                pred_interval = np.zeros((n_data_samples, 0, 2), dtype=np.float32)
+            else:
+                # Gather only missing pixel samples
+                pix_samples = flat_pred[:, :, miss_idx]   # (n_mcmc, n, N_missed_pixels)
+                lower = np.quantile(pix_samples, alpha / 2.0, axis=0)        # (n, N_missed_pixels)
+                upper = np.quantile(pix_samples, 1.0 - alpha / 2.0, axis=0)  # (n, N_missed_pixels)
+                pred_interval = np.stack([lower, upper], axis=-1)            # (n, N_missed_pixels, 2)
+        else:
+            # Different missing patterns; return a list of per-sample intervals
+            pred_interval = []
+            for i in range(n_data_samples):
+                miss_idx_i = np.where(miss_mask_flat[i])[0]  # (N_missed_pixels_i,)
+                if miss_idx_i.size == 0:
+                    # This sample has no missing pixels
+                    pred_interval.append(np.zeros((0, 2), dtype=np.float32))
+                    continue
+                pix_samples_i = flat_pred[:, i, miss_idx_i]  # (n_mcmc, N_missed_pixels_i)
+                lower_i = np.quantile(pix_samples_i, alpha / 2.0, axis=0)        # (N_missed_pixels_i,)
+                upper_i = np.quantile(pix_samples_i, 1.0 - alpha / 2.0, axis=0)  # (N_missed_pixels_i,)
+                intervals_i = np.stack([lower_i, upper_i], axis=-1)              # (N_missed_pixels_i, 2)
+                pred_interval.append(intervals_i)
+
+        return data_x_pred_imputed, pred_interval
 
     @tf.function
-    def get_log_posterior(self, data_z, data_x, ind_x1=None, eps=1e-6):
+    def get_log_posterior(self, data_z, data_x, ind_x1=None, obs_mask=None, eps=1e-6):
         """
         Calculate log posterior.
         data_z: (tf.Tensor): Input data with shape (n, q), where q is the dimension of Z.
-        data_x: (tf.Tensor): Observed data (flattened) with shape (n, p) where p = 28*28 - len(ind_x1) if ind_x1 is not None
-                  Contains only the conditioned pixel values
-                  If ind_x1 is None, data_x should be full flattened image (n, 784)
-        ind_x1: (tf.Tensor or np.ndarray): Indices of conditioned pixels (flattened, 0-indexed).
-                  If None, use all pixels.
+        data_x: (tf.Tensor): (n, 28, 28, 1) or (n, 784) full images;
+                     missing pixels can be any pattern (we ignore them via indices/mask).
+        ind_x1:  None, or int32 Tensor of shape (n, K_max) with pixel indices
+                 for each sample (padded where obs_mask == 0).
+        obs_mask: None, or float32 Tensor of shape (n, K_max),
+                  1 for real observed indices, 0 for padding.
         return (tf.Tensor): Log posterior with shape (n, ).
         """
 
         mu_x, sigma_square_x = self.g_net(data_z)
         x_logits = self.g_net.reparameterize(mu_x, sigma_square_x)
-
         # Clip logits to prevent overflow
         x_logits = tf.clip_by_value(x_logits, -10, 10)
 
@@ -527,17 +595,23 @@ class BGM_IMG(object):
         data_x_flat = tf.reshape(data_x, [batch_size, -1])  # (n, 784)
         x_logits_flat = tf.reshape(x_logits, [batch_size, -1])  # (n, 784)
 
-        if ind_x1 is not None:
-            
-            # Extract conditioned pixels from both data_x and x_logits
-            data_x_cond = tf.gather(data_x_flat, ind_x1, axis=1)
-            x_logits_cond = tf.gather(x_logits_flat, ind_x1, axis=1)
-            
-            # Compute log-likelihood only on conditioned pixels
-            log_px_z = tf.reduce_sum(data_x_cond * x_logits_cond - tf.nn.softplus(x_logits_cond), axis=1)
-        else:
+        # Likelihood term log p(x_obs | z)
+        if ind_x1 is None:
             # Use all pixels
-            log_px_z = tf.reduce_sum(data_x_flat * x_logits_flat - tf.nn.softplus(x_logits_flat), axis=1)
+            ll_term = data_x_flat * x_logits_flat - tf.nn.softplus(x_logits_flat)
+            log_px_z = tf.reduce_sum(ll_term, axis=1)
+        else:
+            # Gather observed pixels per-sample
+            # ind_x1: (n, K_max), obs_mask: (n, K_max)
+            data_x_cond   = tf.gather(data_x_flat, ind_x1, batch_dims=1)   # (n, K_max)
+            x_logits_cond = tf.gather(x_logits_flat, ind_x1, batch_dims=1) # (n, K_max)
+
+            ll_term = data_x_cond * x_logits_cond - tf.nn.softplus(x_logits_cond)  # (n, K_max)
+
+            if obs_mask is not None:
+                ll_term = ll_term * obs_mask  # zero out padded positions
+
+            log_px_z = tf.reduce_sum(ll_term, axis=1)  # (n,)
         
         log_prior_z = -0.5 * tf.reduce_sum(data_z**2, axis=1)
         return log_prior_z + log_px_z
@@ -548,9 +622,13 @@ class BGM_IMG(object):
         Samples from the posterior distribution P(Z|X) using TensorFlow Probability MCMC.
         
         Args:
-            data: (tf.Tensor): Observed data with shape (n, 28, 28, 1) for MNIST images.
-                        Full image with non-conditioned pixels set to zero.
-            ind_x1: (Optional[List[int]]): Indices of conditioned pixels (flattened, 0-indexed).
+            data: (tf.Tensor): Tensor or np.array, shape (n, 28, 28, 1) or (n, 784).
+                     Full images; missing pixels are ignored via ind_x1 / obs_mask with np.nan.
+            ind_x1:  None, or:
+                     - list of lists: len == n, each sublist is observed pixel indices
+                       for that sample, possibly different lengths.
+                     - 2-D int tensor: (n, K_max), same K_max for all.
+                     - 1-D int tensor/list: shared indices for all samples.
             n_mcmc: (int): Number of samples retained after burn-in.
             burn_in: (int): Number of samples for burn-in.
             step_size: (float): Step size for HMC kernel.
@@ -562,14 +640,49 @@ class BGM_IMG(object):
         """
         # Convert data to tensor if not already
         if not isinstance(data, tf.Tensor):
-            data = tf.constant(data, dtype=tf.float32)
-
-        # Convert ind_x1 to tensor if not None
-        if ind_x1 is not None and not isinstance(ind_x1, tf.Tensor):
-            ind_x1 = tf.constant(ind_x1, dtype=tf.int32)
+            data = tf.convert_to_tensor(data, dtype=tf.float32)
         
         n_samples = data.shape[0]
         z_dim = self.params['z_dim']
+
+        ind_x1_tensor = None
+        obs_mask = None
+
+        if ind_x1 is not None:
+            # Case 1: list-of-lists (ragged, arbitrary lengths)
+            if isinstance(ind_x1, (list, tuple)):
+                # Ensure length matches batch
+                assert len(ind_x1) == n_samples, \
+                    f"len(ind_x1)={len(ind_x1)} != n_samples={n_samples}"
+
+                max_len = max(len(row) for row in ind_x1) if n_samples > 0 else 0
+                assert max_len > 0, f"No observed pixels"
+
+                ind_mat = np.zeros((n_samples, max_len), dtype=np.int32)
+                mask_mat = np.zeros((n_samples, max_len), dtype=np.float32)
+
+                for i, row in enumerate(ind_x1):
+                    L = len(row)
+                    if L > 0:
+                        ind_mat[i, :L] = np.array(row, dtype=np.int32)
+                        mask_mat[i, :L] = 1.0
+
+                ind_x1_tensor = tf.constant(ind_mat, dtype=tf.int32)       # (n, K_max)
+                obs_mask = tf.constant(mask_mat, dtype=tf.float32)         # (n, K_max)
+
+            else:
+                # Convert anything else (np arrays, tensors) to tf.Tensor
+                ind_x1_tensor = tf.convert_to_tensor(ind_x1, dtype=tf.int32)
+
+                if ind_x1_tensor.shape.rank == 1:
+                    # Shared pattern for all samples; broadcast to (n, K)
+                    K = tf.shape(ind_x1_tensor)[0]
+                    ind_x1_tensor = tf.broadcast_to(ind_x1_tensor[tf.newaxis, :],
+                                                    [n_samples, K])
+                elif ind_x1_tensor.shape.rank != 2:
+                    raise ValueError("ind_x1 must be rank 1 or 2 if tensor-like.")
+
+                obs_mask = tf.ones_like(ind_x1_tensor, dtype=tf.float32)
         
         # Initialize chains with standard normal distribution
         initial_state = tf.random.normal(
@@ -589,7 +702,7 @@ class BGM_IMG(object):
             Returns:
                 tf.Tensor: Log probability with shape (n_samples,).
             """
-            return self.get_log_posterior(z, data, ind_x1)
+            return self.get_log_posterior(z, data, ind_x1_tensor, obs_mask)
         
         # Create HMC kernel
         hmc_kernel = tfm.HamiltonianMonteCarlo(
