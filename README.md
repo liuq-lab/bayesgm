@@ -47,7 +47,7 @@ BGM serves as the **modeling backbone** upon which task-specific extensions (e.g
 
 CausalBGM adopts a Bayesian iterative approach to update the model parameters and the posterior distribution of latent features until convergence. This framework leverages the power of AI to capture complex dependencies among variables while adhering to the Bayesian principles.
 
-CausalBGM was developed with Python3.9, TensorFlow2.10, and [TensorFlow Probability](https://www.tensorflow.org/probability). Now [Python](https://pypi.org/project/CausalBGM/) PyPI package for CausalBGM is available. Besides, we provide a console program to run CausalBGM directly. For more information, checkout the [Document](https://causalbgm.readthedocs.io/).
+CausalBGM was developed with Python3.9, TensorFlow2.10, and TensorFlow Probability. Now [Python PyPI package]((https://pypi.org/project/CausalBGM/)) for CausalBGM is available. Besides, we provide a console program to run CausalBGM directly. For more information, checkout the [Document](https://causalbgm.readthedocs.io/).
 
 #### CausalBGM Main Applications
 
