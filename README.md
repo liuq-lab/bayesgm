@@ -23,7 +23,7 @@ pip install bayesgm
 
 ## Core Components
 
-### 1️⃣ BGM: General Bayesian Generative Model
+### 1️⃣ BGM: A Bayesian Generative Modeling Approach for Arbitrary Conditional Inference
 
 **BGM** is the foundational component of `bayesgm`, designed for **general-purpose Bayesian generative modeling**.  
 It supports:
@@ -33,17 +33,21 @@ It supports:
 - Posterior uncertainty quantification 
 - Applications including representation learning, imputation, and predictive uncertainty
 
-BGM serves as the **modeling backbone** upon which task-specific extensions (e.g., causal inference) are built.
+BGM serves as the **modeling backbone** upon which task-specific extensions (e.g., causal inference, Bayesian inference) are built.
 
 ---
 
-### 2️⃣ CausalBGM: Bayesian Generative Models for Causal Inference
+### 2️⃣ CausalBGM: An AI-powered Bayesian Generative Modeling Approach for Causal Inference in Observational Studies
 
-CausalBGM is an AI-powered Bayesian generative modeling approach that captures the causal relationship among covariates, treatment, and outcome variables. 
+
+### <a href='https://causalbgm.readthedocs.io/'><img src='https://raw.githubusercontent.com/SUwonglab/CausalBGM/main/docs/source/logo.png' align="left" height="60" /></a> 
+**CausalBGM** is a specialized module built **on top of BGM** for causal inference from observational data.
+
+<a href='https://causalbgm.readthedocs.io/'><img align="left" src="https://github.com/SUwonglab/CausalBGM/blob/main/model.png" width="500">
 
 CausalBGM adopts a Bayesian iterative approach to update the model parameters and the posterior distribution of latent features until convergence. This framework leverages the power of AI to capture complex dependencies among variables while adhering to the Bayesian principles.
 
-CausalBGM was developed with Python3.9, TensorFlow2.10, and [TensorFlow Probability](https://www.tensorflow.org/probability). Now [Python](https://pypi.org/project/CausalBGM/) PyPI package for CausalBGM is available. Besides, we provide a console program to run CausalBGM directly. R package for CausalBGM is coming soon! For more information, checkout the [Document](https://causalbgm.readthedocs.io/).
+CausalBGM was developed with Python3.9, TensorFlow2.10, and [TensorFlow Probability](https://www.tensorflow.org/probability). Now [Python](https://pypi.org/project/CausalBGM/) PyPI package for CausalBGM is available. Besides, we provide a console program to run CausalBGM directly. For more information, checkout the [Document](https://causalbgm.readthedocs.io/).
 
 #### CausalBGM Main Applications
 
