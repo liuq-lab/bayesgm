@@ -5,38 +5,57 @@
 [![Documentation Status](https://readthedocs.org/projects/causalbgm/badge/?version=latest)](https://causalbgm.readthedocs.io)
 
 
-# <a href='https://causalbgm.readthedocs.io/'><img src='https://raw.githubusercontent.com/SUwonglab/CausalBGM/main/docs/source/logo.png' align="left" height="60" /></a> An AI-powered Bayesian generative modeling approach for causal inference in observational studies
+# bayesgm: A Versatile Bayesian Generative Modeling Framework
 
+**bayesgm** is a Python package providing a **unified Bayesian generative modeling (BGM) framework** for representation learning, uncertainty quantification, and downstream tasks such as **causal inference** in complex, high-dimensional data.
 
-<a href='https://causalbgm.readthedocs.io/'><img align="left" src="https://github.com/SUwonglab/CausalBGM/blob/main/model.png" width="500">
-   
+The framework is built upon **Bayesian principles combined with modern deep generative models**, enabling flexible modeling of latent structures, complex dependencies, and principled uncertainty estimation.
+
+---
+
+## Installation
+
+See detailed installation instructions in our [website](https://causalbgm.readthedocs.io/en/latest/installation.html). Briefly, **bayesgm** Python package can be installed via 
+
+```bash
+pip install bayesgm
+```
+
+## Core Components
+
+### 1️⃣ BGM: General Bayesian Generative Model
+
+**BGM** is the foundational component of `bayesgm`, designed for **general-purpose Bayesian generative modeling**.  
+It supports:
+
+- Latent variable modeling with neural networks  
+- Arbitrary conditional inference for high-dimensional data  
+- Posterior uncertainty quantification 
+- Applications including representation learning, imputation, and predictive uncertainty
+
+BGM serves as the **modeling backbone** upon which task-specific extensions (e.g., causal inference) are built.
+
+---
+
+### 2️⃣ CausalBGM: Bayesian Generative Models for Causal Inference
+
 CausalBGM is an AI-powered Bayesian generative modeling approach that captures the causal relationship among covariates, treatment, and outcome variables. 
 
 CausalBGM adopts a Bayesian iterative approach to update the model parameters and the posterior distribution of latent features until convergence. This framework leverages the power of AI to capture complex dependencies among variables while adhering to the Bayesian principles.
 
 CausalBGM was developed with Python3.9, TensorFlow2.10, and [TensorFlow Probability](https://www.tensorflow.org/probability). Now [Python](https://pypi.org/project/CausalBGM/) PyPI package for CausalBGM is available. Besides, we provide a console program to run CausalBGM directly. R package for CausalBGM is coming soon! For more information, checkout the [Document](https://causalbgm.readthedocs.io/).
 
-## CausalBGM Main Applications
+#### CausalBGM Main Applications
 
 - Point estimate of  ATE, ITE, ADRF, CATE.
 
 - Posterior interval estimate of ATE, ITE, ADRF, CATE with user-specific significant level α (alpha).
 
-## Installation
-
-See detailed installation instructions in our [website](https://causalbgm.readthedocs.io/en/latest/installation.html). Briefly, CausalBGM can be installed via 
-
-```bash
-pip install bayesgm
-```
-
-where [bayesgm](https://pypi.org/project/bayesgm/) is a Python package providing AI-powered Bayesian generative modeling approaches and CausalBGM is one of the methods focusing on causal inference. 
-
-## Usage
+#### Usage
 
 A detailed Python tutorial can be found at our [website](https://causalbgm.readthedocs.io/en/latest/tutorial_py.html). The source Python notebook for the detailed tutorial is provided at [here](https://github.com/SUwonglab/CausalBGM/blob/main/docs/source/tutorial_py.ipynb).
 
-### Example Usage of CausalBGM
+##### Example Usage of CausalBGM
 
 ```python
 import yaml
@@ -63,7 +82,7 @@ causal_pre, pos_intervals = model.predict(
 )
 ```
 
-## Datasets
+#### Datasets
 
 `bayesgm` package provides several built-in simulation datasets from `bayesgm.datasets`.
 
