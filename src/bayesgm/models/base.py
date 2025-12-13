@@ -115,40 +115,43 @@ class BayesianVariationalNet(tf.keras.Model):
             bayesian_layer = tfp.layers.DenseFlipout(
                 units=self.nb_units[i],
                 activation=None,
-                kernel_prior_fn=kernel_prior_fn
+                kernel_prior_fn=kernel_prior_fn,
+                bias_prior_fn=kernel_prior_fn
             )
             self.all_layers.append(bayesian_layer)
         self.mean_layer = tfp.layers.DenseFlipout(
                 units=self.output_dim,
                 activation=None,
-                kernel_prior_fn=kernel_prior_fn
+                kernel_prior_fn=kernel_prior_fn,
+                bias_prior_fn=kernel_prior_fn
             )
         self.var_layer = tfp.layers.DenseFlipout(
                 units=self.output_dim,
                 #units=1,
                 activation=None,
-                kernel_prior_fn=kernel_prior_fn
+                kernel_prior_fn=kernel_prior_fn,
+                bias_prior_fn=kernel_prior_fn
             )
             
     def call(self, inputs, eps=1e-6, training=True):
         """ Return the output of the Bayesian network. """
-        x = self.norm_layer(inputs)
+        x = self.norm_layer(inputs, training=training)
         for i, bayesian_layer in enumerate(self.all_layers):
-            with tf.name_scope("%s_layer_%d" % (self.model_name, i+1)):
-                x = bayesian_layer(x)
+            with tf.name_scope("%s_layer_%d" % (self.model_name, i + 1)):
+                x = bayesian_layer(x, training=training)
                 x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-        
+                
         # Final layer without activation
         with tf.name_scope("%s_layer_output" % self.model_name):
-            mean = self.mean_layer(x)
-            var = self.var_layer(x)
+            mean = self.mean_layer(x, training=training)
+            var = self.var_layer(x, training=training)
             var = tf.nn.softplus(var) + eps
         return mean, var
     
     def reparameterize(self, mean, var):
         eps = tf.random.normal(shape=tf.shape(mean))
         return eps * tf.sqrt(var) + mean
-    
+            
 class FCNVariationalNet(tf.keras.Model):
     """ Standard (non-Bayesian) fully connected neural network """
     def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256]):
@@ -193,7 +196,7 @@ class FCNVariationalNet(tf.keras.Model):
             
     def call(self, inputs, eps=1e-6, training=True):
         """ Return the output of the Bayesian network. """
-        x = self.norm_layer(inputs)
+        x = self.norm_layer(inputs, training=training)
         for i, bayesian_layer in enumerate(self.all_layers):
             with tf.name_scope("%s_layer_%d" % (self.model_name, i+1)):
                 x = bayesian_layer(x)
