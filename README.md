@@ -11,6 +11,8 @@
 
 The framework is built upon **Bayesian principles combined with modern deep generative models**, enabling flexible modeling of latent structures, complex dependencies, and principled uncertainty estimation.
 
+**BGM** is the foundational component of `bayesgm`, designed for **general-purpose Bayesian generative modeling**. It also serves as the **modeling backbone** upon which task-specific extensions (e.g., causal inference, Bayesian inference) are built.
+
 ---
 
 ## Installation
@@ -25,7 +27,6 @@ pip install bayesgm
 
 ### 1️⃣ BGM: A Bayesian Generative Modeling Approach for Arbitrary Conditional Inference
 
-**BGM** is the foundational component of `bayesgm`, designed for **general-purpose Bayesian generative modeling**.  
 It supports:
 
 - Latent variable modeling with neural networks  
@@ -33,7 +34,6 @@ It supports:
 - Posterior uncertainty quantification 
 - Applications including representation learning, imputation, and predictive uncertainty
 
-BGM serves as the **modeling backbone** upon which task-specific extensions (e.g., causal inference, Bayesian inference) are built.
 
 ---
 
