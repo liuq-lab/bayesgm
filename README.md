@@ -68,8 +68,6 @@ model.fit(data=data, epochs=500, epochs_per_eval=10, verbose=1)
 # Provide both point estimate and posterior interval (uncertainty) using the trained BGM model
 ind_x1 = list(range(params['x_dim']-1))
 data_x_pred, pred_interval = model.predict(data=X_test,ind_x1=ind_x1,alpha=0.05,bs=100,seed=42)
-X_test_pred = data_x_pred[:,:,-1]
-X_test_pred_mean = np.mean(X_test_pred, axis=0)
 ```
 ---
 
