@@ -141,9 +141,7 @@ For semi-synthetic dataset, users need to create a `CausalBGM/data` folder and u
 
 ## Support
 
-Found a bug or would like to see a feature implemented? Feel free to submit an [issue](https://github.com/SUwonglab/CausalBGM/issues/new/choose). 
+Found a bug or would like to see a feature implemented? Feel free to submit an [issue](https://github.com/liuq-lab/bayesgm/issues/new/choose). 
 
-Have a question or would like to start a new discussion? You can also always send us an [e-mail](mailto:liuqiao@stanford.edu?subject=[GitHub]%20CausalBGM%20project). 
-
-Your help to improve CausalBGM is highly appreciated! For further information visit [website](https://causalbgm.readthedocs.io/).
+Have a question or would like to start a new discussion? You can also always send us an [e-mail](mailto:qiao.liu@yale.edu?subject=[GitHub]%20bayesgm%20project). 
 
