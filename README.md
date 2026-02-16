@@ -1,8 +1,16 @@
+<a href="https://scvi-tools.org/">
+  <img
+    src="https://github.com/liuq-lab/bayesgm/blob/main/docs/source/logo.png"
+    width="400"
+    alt="bayesgm"
+  >
+</a>
+
 [![PyPI](https://img.shields.io/pypi/v/bayesgm)](https://pypi.org/project/bayesgm/)
 [![Anaconda](https://anaconda.org/conda-forge/causalegm/badges/version.svg)](https://anaconda.org/conda-forge/causalegm)
 [![Travis (.org)](https://app.travis-ci.com/kimmo1019/CausalEGM.svg?branch=main)](https://app.travis-ci.com/github/kimmo1019/CausalEGM)
 [![All Platforms](https://dev.azure.com/conda-forge/feedstock-builds/_apis/build/status/causalegm-feedstock?branchName=main)](https://dev.azure.com/conda-forge/feedstock-builds/_build/latest?definitionId=18625&branchName=main)
-[![Documentation Status](https://readthedocs.org/projects/causalbgm/badge/?version=latest)](https://causalbgm.readthedocs.io)
+[![Documentation Status](https://readthedocs.org/projects/bayesgm/badge/?version=latest)](https://bayesgm.readthedocs.io)
 
 
 # bayesgm: A toolkit for AI-driven Bayesian Generative Modeling
@@ -20,7 +28,7 @@ Currently, the **bayesgm** package includes two model families:
 
 ## Installation
 
-See detailed installation instructions in our [website](https://causalbgm.readthedocs.io/en/latest/installation.html). Briefly, **bayesgm** Python package can be installed via 
+See detailed installation instructions in our [website](https://bayesgm.readthedocs.io/en/latest/getting-started/installation.html). Briefly, **bayesgm** Python package can be installed via 
 
 ```bash
 pip install bayesgm
@@ -42,7 +50,7 @@ With a trained BGM model, you can::
 
 #### Usage
 
-A detailed Python tutorial can be found at our [website](https://causalbgm.readthedocs.io/en/latest/tutorial_py.html).
+A detailed Python tutorial can be found at our [website](https://bayesgm.readthedocs.io/en/latest/bgm/tutorial_py.html).
 
 ##### Example Usage of BGM
 
@@ -76,14 +84,11 @@ data_x_pred, pred_interval = model.predict(data=data_test, alpha=0.05, n_mcmc=50
 ### 2️⃣ CausalBGM: An AI-powered Bayesian Generative Modeling Approach for Causal Inference in Observational Studies
 
 
-### <a href='https://causalbgm.readthedocs.io/'><img src='https://raw.githubusercontent.com/SUwonglab/CausalBGM/main/docs/source/logo.png' align="left" height="60" /></a> 
 **CausalBGM** is a specialized module built **on top of BGM** for causal inference from observational data.
 
-<a href='https://causalbgm.readthedocs.io/'><img align="left" src="https://github.com/SUwonglab/CausalBGM/blob/main/model.png" width="500">
+<a href='https://bayesgm.readthedocs.io/en/latest/causalbgm/index.html/'><img align="left" src="https://github.com/SUwonglab/CausalBGM/blob/main/model.png" width="500">
 
 CausalBGM adopts a Bayesian iterative approach to update the model parameters and the posterior distribution of latent features until convergence. This framework leverages the power of AI to capture complex dependencies among variables while adhering to the Bayesian principles.
-
-CausalBGM was developed with Python3.9, TensorFlow2.10, and TensorFlow Probability. Now [Python PyPI package]((https://pypi.org/project/CausalBGM/)) for CausalBGM is available. Besides, we provide a console program to run CausalBGM directly. For more information, checkout the [Document](https://causalbgm.readthedocs.io/).
 
 #### CausalBGM Main Applications
 
@@ -93,7 +98,7 @@ CausalBGM was developed with Python3.9, TensorFlow2.10, and TensorFlow Probabili
 
 #### Usage
 
-A detailed Python tutorial can be found at our [website](https://causalbgm.readthedocs.io/en/latest/tutorial_py.html). The source Python notebook for the detailed tutorial is provided at [here](https://github.com/SUwonglab/CausalBGM/blob/main/docs/source/tutorial_py.ipynb).
+A detailed Python tutorial can be found at our [website](https://bayesgm.readthedocs.io/en/latest/causalbgm/tutorial_py.html).
 
 ##### Example Usage of CausalBGM
 
