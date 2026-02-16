@@ -1,18 +1,9 @@
 # Docs Layout
 
-This folder now supports three Read the Docs build targets:
+This folder supports a single Read the Docs build for the unified `bayesgm` package (BGM + CausalBGM):
 
-1. Unified `bayesgm` docs (BGM + CausalBGM)
-   - Config: `.readthedocs.yaml`
-   - Sphinx config: `docs/source/conf.py`
-
-2. BGM-only docs
-   - Config: `.readthedocs-bgm.yaml`
-   - Sphinx config: `docs/source/conf_bgm.py`
-
-3. CausalBGM-only docs
-   - Config: `.readthedocs-causalbgm.yaml`
-   - Sphinx config: `docs/source/conf_causalbgm.py`
+- RTD config: `.readthedocs.yaml`
+- Sphinx config: `docs/source/conf.py`
 
 Main content sections live in:
 
