@@ -30,24 +30,79 @@ def save_data(fname, data, delimiter='\t'):
     else:
         raise ValueError("Wrong saving format, please specify either .npy, .txt, or .csv")
 
-def parse_file(path, sep='\t', header = 0, normalize=True):
+def parse_file(path, sep='\t', header=0, normalize=True):
     """
-    Parse an input file and extract features (x, y, and v) for model training or evaluation.
+    Parse an input data file and return a single data matrix.
 
-    Parameters:
-    -----------
+    This is a general-purpose loader for the BGM model, where the input
+    is a single data matrix (as opposed to the causal triplet format with
+    treatment, outcome, and covariates).
+
+    Parameters
+    ----------
+    path : str
+        Path to the input file. Supported formats: .npz, .csv, .txt.
+    sep : str, optional
+        Separator for .csv or .txt files. Default is tab-delimited.
+    header : int or None, optional
+        Row number to use as column names in .csv files. Default is 0.
+    normalize : bool, optional
+        If True, the data will be normalized using ``StandardScaler``.
+
+    Returns
+    -------
+    data : np.ndarray
+        The data matrix with shape ``(n_samples, n_features)``, dtype float32.
+
+    Examples
+    --------
+    >>> data = parse_file("data.csv", sep=',', normalize=True)
+    >>> data = parse_file("data.npz", normalize=False)
+    """
+    assert os.path.exists(path), f"File not found: {path}"
+    if path.endswith('npz'):
+        loaded = np.load(path)
+        # Support common key names: 'data', 'x', or the first key
+        for key in ['data', 'x', 'X']:
+            if key in loaded:
+                data = loaded[key]
+                break
+        else:
+            # Use the first available key
+            first_key = list(loaded.keys())[0]
+            data = loaded[first_key]
+    elif path.endswith('csv'):
+        data = pd.read_csv(path, header=header, sep=sep).values
+    elif path.endswith('txt'):
+        data = np.loadtxt(path, delimiter=sep)
+    else:
+        print('File format not recognized, please use .npz, .csv or .txt as input.')
+        sys.exit()
+    data = data.astype('float32')
+    if normalize:
+        data = StandardScaler().fit_transform(data)
+    return data
+
+
+def parse_file_triplet(path, sep='\t', header=0, normalize=True):
+    """
+    Parse an input file and extract the (treatment, outcome, covariates) triplet
+    for CausalBGM model training or evaluation.
+
+    Parameters
+    ----------
     path : str
         Path to the input file. The file can be in .npz, .csv, or .txt format.
-    sep : str, optional (default: '\t')
-        Separator used in .csv or .txt files. Defaults to tab-delimited format ('\t').
-    header : int or None, optional (default: 0)
+    sep : str, optional
+        Separator used in .csv or .txt files. Defaults to tab-delimited format.
+    header : int or None, optional
         Row number to use as column names in .csv files. Default is 0 (the first row). 
         Use `None` if the file does not have a header.
-    normalize : bool, optional (default: True)
+    normalize : bool, optional
         If True, the features in `v` will be normalized using `StandardScaler`.
 
-    Returns:
-    --------
+    Returns
+    -------
     data_x : np.ndarray
         The treatment variable(s) extracted from the file, reshaped to (-1, 1).
     data_y : np.ndarray
@@ -55,8 +110,8 @@ def parse_file(path, sep='\t', header = 0, normalize=True):
     data_v : np.ndarray
         Covariates extracted from the file. Normalized if `normalize=True`.
 
-    Notes:
-    ------
+    Notes
+    -----
     - Supported file formats:
         - `.npz`: Numpy compressed files with keys `x`, `y`, and `v`.
         - `.csv`: Comma-separated value files with treatment, outcome, and covariates as columns.
@@ -66,13 +121,13 @@ def parse_file(path, sep='\t', header = 0, normalize=True):
     - The second column is assumed to be the outcome variable (`y`).
     - Remaining columns are assumed to be covariates (`v`).
 
-    Example:
+    Examples
     --------
     # Example for .csv input
-    data_x, data_y, data_v = parse_file("data.csv", sep=',', header=0, normalize=True)
+    data_x, data_y, data_v = parse_file_triplet("data.csv", sep=',', header=0, normalize=True)
     
     # Example for .npz input
-    data_x, data_y, data_v = parse_file("data.npz", normalize=False)
+    data_x, data_y, data_v = parse_file_triplet("data.npz", normalize=False)
     """
     assert os.path.exists(path)
     if path[-3:] == 'npz':

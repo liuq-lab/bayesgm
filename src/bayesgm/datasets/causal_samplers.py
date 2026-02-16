@@ -168,3 +168,4 @@ class Semi_Twins_sampler(Base_sampler):
         x = x.reshape(-1,1)
         y = y.reshape(-1,1)
         super().__init__(x,y,v,batch_size=batch_size,normalize=True)
+

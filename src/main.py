@@ -2,20 +2,10 @@ import yaml
 import argparse
 import numpy as np
 import sys
-from bayesgm.models import CausalBGM, BayesGM, BayesGM_v2, BayesGM_v0, BGM_IMG
-from bayesgm.utils import (
-    GMM_indep_sampler, 
-    Swiss_roll_sampler, 
-    simulate_regression, 
-    simulate_low_rank_data, 
-    simulate_heteroskedastic_data, 
-    simulate_z_hetero
-)
+from bayesgm.models import CausalBGM, BGM, MNISTBGM
 from bayesgm.datasets import (
+    simulate_z_hetero,
     Sim_Hirano_Imbens_sampler, 
-    Sim_Sun_sampler, 
-    Sim_Colangelo_sampler, 
-    Semi_Twins_sampler, 
     Semi_acic_sampler
 )
 from sklearn.model_selection import train_test_split
@@ -59,11 +49,8 @@ if __name__=="__main__":
         # Instantiate a CausalBGM model
         model = CausalBGM(params=params, random_seed=None)
 
-        # Perform Encoding Generative Modeling (EGM) initialization
-        model.egm_init(data=(x,y,v), n_iter=30000, batches_per_eval=500, verbose=1)
-
         # Train the CausalBGM model with an iterative updating algorithm
-        model.fit(data=(x,y,v), epochs=100, epochs_per_eval=10, verbose=1)
+        model.fit(data=(x,y,v), epochs=100, epochs_per_eval=10, use_egm_init=True, egm_n_iter=30000, egm_batches_per_eval=500, verbose=1)
 
         # Make predictions using the trained CausalBGM model
         causal_pre, pos_intervals = model.predict(data=(x,y,v), alpha=0.01, n_mcmc=3000, x_values=np.linspace(0,3,20), q_sd=1.0)
@@ -74,152 +61,40 @@ if __name__=="__main__":
         # Instantiate a CausalBGM model
         model = CausalBGM(params=params, random_seed=None)
 
-        # Perform Encoding Generative Modeling (EGM) initialization
-        model.egm_init(data=(x,y,v), n_iter=30000, batches_per_eval=500, verbose=1)
-
         # Train the CausalBGM model with an iterative updating algorithm
-        model.fit(data=(x,y,v), epochs=100, epochs_per_eval=10, verbose=1)
+        model.fit(data=(x,y,v), epochs=100, epochs_per_eval=10, use_egm_init=True, egm_n_iter=30000, egm_batches_per_eval=500, verbose=1)
         
         # Make predictions using the trained CausalBGM model
         causal_pre, pos_intervals = model.predict(data=(x,y,v), alpha=0.01, n_mcmc=3000, q_sd=1.0)
 
-    elif params['dataset'] == 'Sim_indep_gmm':
-        xs = GMM_indep_sampler(N=20000, sd=0.1, dim=2, n_components=3, bound=1)
-        x,_ = xs.load_all()
-        x = x.astype('float32')
-        print('data',x.shape)
-        #import pyroundtrip as pyrt
-        #params = yaml.safe_load(open('configs/config_indep_gmm.yaml', 'r'))
-        #model = pyrt.Roundtrip(params=params,random_seed=123)
-        #model.train(data=x, save_format='npy', n_iter=40000, batches_per_eval=10000)
-        #z = model.e_net(x)
-        #x_gen = model.g_net(np.random.normal(0, 1.0, (5000, 2)).astype('float32'))
-        #np.savez('rt.npy',z = z, x_gen=x_gen)
-        params['kl_weight'] = kl_weight
-        params['lr_theta']=lr
-        params['lr_z']=lr
-        params['dataset'] = 'Sim_indep_gmm_%s_%s'%(kl_weight, lr)
-        model = BayesGM(params=params, random_seed=None)
-        data_gen_0 = model.generate(nb_samples=5000)
-        model.egm_init(data=x, n_iter=50000, batch_size=32, batches_per_eval=5000, verbose=1)
-        model.fit(data=x, epochs=1000, epochs_per_eval=50, verbose=1)
 
-    elif params['dataset'] == 'Sim_Swiss_roll':
-        params['dataset'] = 'Sim_Swiss_roll_%s_%s'%(kl_weight, lr)
-        xs = Swiss_roll_sampler(N=20000)
-        x,_ = xs.load_all()
-        x = x.astype('float32')
-        print('data',x.shape)
-        #import pyroundtrip as pyrt
-        #params = yaml.safe_load(open('configs/config_indep_gmm.yaml', 'r'))
-        #model = pyrt.Roundtrip(params=params,random_seed=123)
-        #model.train(data=x, save_format='npy', n_iter=40000, batches_per_eval=10000)
-        #z = model.e_net(x)
-        #x_gen = model.g_net(np.random.normal(0, 1.0, (5000, 2)).astype('float32'))
-        #np.savez('rt.npy',z = z, x_gen=x_gen)
-        #sys.exit()
-        params['kl_weight'] = kl_weight
-        params['lr_theta']=lr
-        params['lr_z']=lr
-        model = BayesGM(params=params, random_seed=None)
-        data_gen_0 = model.generate(nb_samples=5000)
-        model.egm_init(data=x, n_iter=50000, batch_size=32, batches_per_eval=5000, verbose=1)
-        
-        model.fit(data=x, epochs=1000, epochs_per_eval=50, verbose=1)
-    elif params['dataset'] == 'Sim_regression':
-        params['dataset'] = 'Sim_regression_%s_%s_%d_%d_%d'%(kl_weight, lr, z_dim, E, B)
-        params['kl_weight'] = kl_weight
-        params['lr_theta'] = lr
-        params['lr_z'] = lr
-        params['g_units'] = units
-        params['e_units'] = units
-        params['z_dim'] = z_dim
-
-        X, Y = simulate_regression(n_samples=20000, n_features=10, n_targets=1)
-        from sklearn.model_selection import train_test_split
-        X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.1, random_state=123)
-        print(Y[:5])
-        data = np.c_[X_train, Y_train].astype('float32')
-        params['x_dim'] = data.shape[1]
-        #model = BayesGM(params=params, random_seed=None)
-        model = BayesGM_v2(params=params, random_seed=None)
-        model.egm_init(data=data, n_iter=B, batch_size=32, batches_per_eval=5000, verbose=1)
-        model.fit(data=data, epochs=E, epochs_per_eval=50, verbose=1)
-        #model.ckpt.restore('checkpoints/Sim_regression_0.0001_0.0001/20250217_135642/ckpt-1000')
-        #model.ckpt.restore('checkpoints/Sim_regression_0.002_0.0001_5_2000_20000/20250302_150648/ckpt-%d'%E)
-        data_posterior_z, accept_rate = model.gradient_mcmc_sampler(data = X_test.astype('float32'),
-                                                                    ind_x1=list(range(10)),
-                                                                    kernel='hmc',
-                                                                    n_mcmc = 5000,
-                                                                    burn_in = 3000,
-                                                                    step_size = 0.05,
-                                                                    num_leapfrog_steps=25,seed=None)
-
-        bs=100
-        data_x_pred = []
-        # Iterate over the data_posterior_z in batches
-        for i in range(0, data_posterior_z.shape[1], bs):
-            batch_posterior_z = data_posterior_z[:,i:i + bs,:]
-            data_x_batch_pred = model.predict_on_posteriors(batch_posterior_z)
-            data_x_batch_pred = data_x_batch_pred.numpy()
-            data_x_pred.append(data_x_batch_pred)
-
-        data_x_pred = np.concatenate(data_x_pred, axis=1)
-        y_pre = np.mean(data_x_pred[:,:,-1],axis=0)
-        from scipy.stats import pearsonr
-        corr, _ = pearsonr(Y_test[:,0], y_pre)
-        print('Mean Acce.Rate',np.mean(accept_rate))
-        print('MSE',np.mean((y_pre-Y_test[:,0])**2))
-        print(f"Pearson's correlation coefficient: {corr}")
-        sys.exit()
-        # Write results to the file
-        with open("logs/res_sim_regression_0.002_0.0001_5_2000_20000.txt", "a") as f:
-            f.write(f"{E},{np.mean(accept_rate)},{np.mean((y_pre-Y_test[:,0])**2)},{corr}\n")
-
-    elif params['dataset'] == 'Sim_low_rank':
-        params['dataset'] = 'Sim_low_rank_v3_%s_%s_%d_%d_%d'%(kl_weight, alpha, z_dim, E, B)
-        params['kl_weight'] = kl_weight
-        params['lr_theta'] = lr
-        params['lr_z'] = lr
-        params['alpha'] = alpha
-        params['g_units'] = units
-        params['e_units'] = units
-        params['z_dim'] = z_dim
-        params['rank'] = rank
-
-        X, Z = simulate_low_rank_data(n_samples=20000, sigma_z=True)
-        X_train, X_test, Z_train, Z_test = train_test_split(X, Z, test_size=0.1, random_state=123)
-        model = BayesGM_v2(params=params, random_seed=None)
-        model.egm_init(data=X_train, n_iter=B, batch_size=32, batches_per_eval=5000, verbose=1)
-        model.fit(data=X_train, epochs=E, epochs_per_eval=50, verbose=1)
-        #print(model.fcn_net)
-
-    elif params['dataset'] == 'Sim_heteroskedastic':
-        params['dataset'] = 'Sim_heteroskedastic_%s_%s_%d_%d_%d'%(kl_weight, alpha, z_dim, E, B)
-        params['kl_weight'] = kl_weight
-        params['lr_theta'] = lr
-        params['lr_z'] = lr
-        params['alpha'] = alpha
-        params['g_units'] = units
-        params['e_units'] = units
-        params['z_dim'] = z_dim
-        params['x_dim'] = x_dim
-        params['rank'] = rank
-        params['use_bnn'] = False
-        
+    elif params['dataset'] == 'Sim_heteroskedastic':        
         X,Y = simulate_z_hetero(n=20000, k=params['z_dim'], d=params['x_dim']-1)
-        np.random.seed(123)
         X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.1, random_state=123)
-        data = np.c_[X_train, Y_train].astype('float32')
+        data_train = np.c_[X_train, Y_train].astype('float32')
         X_test = X_test.astype('float32')
         Y_test = Y_test.astype('float32')
-        model = BayesGM(params=params, random_seed=None)
-        ind_x1 = list(range(params['x_dim']-1))
+        model = BGM(params=params, random_seed=None)
+        model.fit(data=data_train, epochs=200, epochs_per_eval=10, use_egm_init=True, egm_n_iter=50000, egm_batches_per_eval=500, verbose=1)
+        data_test = np.hstack([X_test, np.full((X_test.shape[0], 1), np.nan)])
+        data_x_pred, pred_interval = model.predict(data=data_test, 
+                                                    alpha=0.05, 
+                                                    bs=100,
+                                                    n_mcmc=5000, 
+                                                    burn_in=5000, 
+                                                    step_size=0.01, 
+                                                    num_leapfrog_steps=10, 
+                                                    seed=42)
+        print(data_x_pred.shape, pred_interval.shape)
+        np.savez(f'data_pred_test1.npz', data_x_pred=data_x_pred, pred_interval=np.array(pred_interval, dtype=object))
+        sys.exit()
+
+        
         if True:
             model.egm_init(data=data, n_iter=B, batch_size=32, batches_per_eval=5000, verbose=1)
             model.fit(data=data, epochs=E, epochs_per_eval=20, verbose=1)
-            data_x_pred, pred_interval = model.predict(data=X_test, 
-                                                        ind_x1=ind_x1, 
+            data = np.hstack([X_test, np.full((X_test.shape[0], 1), np.nan)])
+            data_x_pred, pred_interval = model.predict(data=data, 
                                                         alpha=0.05, 
                                                         bs=100,
                                                         n_mcmc=5000, 
@@ -227,7 +102,6 @@ if __name__=="__main__":
                                                         step_size=0.01, 
                                                         num_leapfrog_steps=10, 
                                                         seed=42)
-            print(data_x_pred.shape, pred_interval.shape)
 
             X_test_pred = data_x_pred[:,:,-1]
             X_test_pred_mean = np.mean(X_test_pred, axis=0)
@@ -251,8 +125,8 @@ if __name__=="__main__":
                 print(f"Epoch {epoch}")
                 base_path = checkpoint_path + f"/weights_at_{epoch}"
                 model.g_net.load_weights(f"{base_path}_generator.weights.h5")
-                data_x_pred, pred_interval = model.predict(data=X_test, 
-                                                            ind_x1=ind_x1, 
+                data = np.hstack([X_test, np.full((X_test.shape[0], 1), np.nan)])
+                data_x_pred, pred_interval = model.predict(data=data, 
                                                             alpha=0.05, 
                                                             bs=500, 
                                                             n_mcmc=5000, 
@@ -261,7 +135,8 @@ if __name__=="__main__":
                                                             num_leapfrog_steps=10, 
                                                             seed=42)
                 print(data_x_pred.shape, pred_interval.shape)
-
+                np.savez(f'data_pred_test.npz', data_x_pred=data_x_pred, pred_interval=np.array(pred_interval, dtype=object))
+                sys.exit()
                 X_test_pred = data_x_pred[:,:,-1]
                 X_test_pred_mean = np.mean(X_test_pred, axis=0)
                 X_test_pred_median = np.median(X_test_pred, axis=0)
@@ -299,7 +174,7 @@ if __name__=="__main__":
         x_test = x_test.reshape(-1, 28, 28, 1)
         x_train = x_train.astype('float32')
         x_test = x_test.astype('float32')
-        model = BGM_IMG(params=params, random_seed=None)
+        model = MNISTBGM(params=params, random_seed=None)
         if False:
             print('Initializing EGM...')
             model.egm_init(data=x_train, n_iter=B, batch_size=32, batches_per_eval=5000, verbose=1)

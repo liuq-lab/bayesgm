@@ -4,7 +4,7 @@ import numpy as np
 from unittest import mock
 from unittest.mock import ANY
 from bayesgm.cli.cli import main
-from bayesgm.utils.data_io import parse_file, save_data
+from bayesgm.utils.data_io import parse_file_triplet, save_data
 from bayesgm.models import CausalBGM
 
 def numpy_array_equal(array1, array2):
@@ -12,19 +12,19 @@ def numpy_array_equal(array1, array2):
 
 @pytest.fixture
 def mock_data():
-    """Fixture for creating mock data returned by parse_file."""
+    """Fixture for creating mock data returned by parse_file_triplet."""
     x = np.random.rand(5, 1)
     y = np.random.rand(5, 1)
     v = np.random.rand(5, 10)
     return x, y, v
 
-@mock.patch("bayesgm.cli.cli.parse_file")
+@mock.patch("bayesgm.cli.cli.parse_file_triplet")
 @mock.patch("bayesgm.cli.cli.CausalBGM")
 @mock.patch("bayesgm.cli.cli.save_data")
-def test_main(mock_save_data, mock_causalbgm, mock_parse_file, tmp_path, mock_data):
+def test_main(mock_save_data, mock_causalbgm, mock_parse_file_triplet, tmp_path, mock_data):
     """Test the main function of cli.py."""
-    # Mock the parse_file function to return mock data
-    mock_parse_file.return_value = mock_data
+    # Mock the parse_file_triplet function to return mock data
+    mock_parse_file_triplet.return_value = mock_data
 
     # Mock the CausalBGM object and its methods
     mock_model = mock.Mock()
@@ -32,9 +32,10 @@ def test_main(mock_save_data, mock_causalbgm, mock_parse_file, tmp_path, mock_da
     mock_model.save_dir = tmp_path
     mock_causalbgm.return_value = mock_model
 
-    # Simulate command-line arguments
+    # Simulate command-line arguments (now uses subcommands)
     test_args = [
-        "cli.py",
+        "bayesgm",
+        "causalbgm",
         "-o", str(tmp_path),
         "-i", "test_data.csv",
         "-t", "\t",
@@ -43,8 +44,8 @@ def test_main(mock_save_data, mock_causalbgm, mock_parse_file, tmp_path, mock_da
     with mock.patch("sys.argv", test_args):
         main()
 
-    # Verify parse_file was called with the correct arguments
-    mock_parse_file.assert_called_once_with("test_data.csv", sep="\t")
+    # Verify parse_file_triplet was called with the correct arguments
+    mock_parse_file_triplet.assert_called_once_with("test_data.csv", sep="\t")
 
     # Verify the CausalBGM object was created with correct parameters
     mock_causalbgm.assert_called_once()

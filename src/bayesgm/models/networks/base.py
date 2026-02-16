@@ -2,7 +2,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 class BaseFullyConnectedNet(tf.keras.Model):
-    """ Generator network.
+    """Basic multi-layer perceptron (MLP) with optional batch normalization.
     """
     def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256], batchnorm=False):  
         super(BaseFullyConnectedNet, self).__init__()
@@ -50,110 +50,11 @@ class BaseFullyConnectedNet(tf.keras.Model):
             #x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
         return output
 
-class BayesianFullyConnectedNet(tf.keras.Model):
-    """ Bayesian fully connected neural network"""
-    def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256]):
-        super(BayesianFullyConnectedNet, self).__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.model_name = model_name
-        self.nb_units = nb_units
-        self.all_layers = []
-        
-        self.norm_layer = tf.keras.layers.BatchNormalization()
-
-        kernel_prior_fn = lambda dtype, shape, name, trainable, add_variable_fn: tfp.distributions.Independent(
-                    tfp.distributions.Normal(loc=tf.zeros(shape, dtype=dtype), scale=0.1),
-                    reinterpreted_batch_ndims=len(shape)
-                )
-
-        # Define Bayesian layers for each fully connected layer
-        for i in range(len(nb_units) + 1):
-            units = self.output_dim if i == len(nb_units) else self.nb_units[i]
-            bayesian_layer = tfp.layers.DenseFlipout(
-                units=units,
-                activation=None,
-                kernel_prior_fn=kernel_prior_fn
-            )
-            self.all_layers.append(bayesian_layer)
-            
-    def call(self, inputs, training=True):
-        """ Return the output of the Bayesian network. """
-        x = self.norm_layer(inputs)
-        for i, bayesian_layer in enumerate(self.all_layers[:-1]):
-            with tf.name_scope("%s_layer_%d" % (self.model_name, i+1)):
-                x = bayesian_layer(x)
-                x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-        
-        # Final layer without activation
-        bayesian_layer = self.all_layers[-1]
-        with tf.name_scope("%s_layer_output" % self.model_name):
-            output = bayesian_layer(x)
-        #kl_divergence = sum(self.losses)
-        return output#, kl_divergence
-    
-class BayesianVariationalNet(tf.keras.Model):
-    """ Bayesian fully connected neural network"""
-    def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256]):
-        super(BayesianVariationalNet, self).__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.model_name = model_name
-        self.nb_units = nb_units
-        self.all_layers = []
-        
-        self.norm_layer = tf.keras.layers.BatchNormalization()
-
-        kernel_prior_fn = lambda dtype, shape, name, trainable, add_variable_fn: tfp.distributions.Independent(
-                    tfp.distributions.Normal(loc=tf.zeros(shape, dtype=dtype), scale=0.1),
-                    reinterpreted_batch_ndims=len(shape)
-                )
-
-        # Define Bayesian layers for each fully connected layer
-        for i in range(len(nb_units)):
-            #units = self.output_dim if i == len(nb_units) else self.nb_units[i]
-            bayesian_layer = tfp.layers.DenseFlipout(
-                units=self.nb_units[i],
-                activation=None,
-                kernel_prior_fn=kernel_prior_fn,
-                bias_prior_fn=kernel_prior_fn
-            )
-            self.all_layers.append(bayesian_layer)
-        self.mean_layer = tfp.layers.DenseFlipout(
-                units=self.output_dim,
-                activation=None,
-                kernel_prior_fn=kernel_prior_fn,
-                bias_prior_fn=kernel_prior_fn
-            )
-        self.var_layer = tfp.layers.DenseFlipout(
-                units=self.output_dim,
-                #units=1,
-                activation=None,
-                kernel_prior_fn=kernel_prior_fn,
-                bias_prior_fn=kernel_prior_fn
-            )
-            
-    def call(self, inputs, eps=1e-6, training=True):
-        """ Return the output of the Bayesian network. """
-        x = self.norm_layer(inputs, training=training)
-        for i, bayesian_layer in enumerate(self.all_layers):
-            with tf.name_scope("%s_layer_%d" % (self.model_name, i + 1)):
-                x = bayesian_layer(x, training=training)
-                x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-                
-        # Final layer without activation
-        with tf.name_scope("%s_layer_output" % self.model_name):
-            mean = self.mean_layer(x, training=training)
-            var = self.var_layer(x, training=training)
-            var = tf.nn.softplus(var) + eps
-        return mean, var
-    
-    def reparameterize(self, mean, var):
-        eps = tf.random.normal(shape=tf.shape(mean))
-        return eps * tf.sqrt(var) + mean
-            
-class FCNVariationalNet(tf.keras.Model):
-    """ Standard (non-Bayesian) fully connected neural network """
+class BaseVariationalNet(tf.keras.Model):
+    """Standard (non-Bayesian) variational network with diagonal covariance.
+    Outputs both a mean and a variance for each output dimension, enabling
+    reparameterized sampling.
+    """
     def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256]):
         """
         Initializes the model layers.
@@ -164,7 +65,7 @@ class FCNVariationalNet(tf.keras.Model):
             model_name (str): A name for the model, used for scoping.
             nb_units (list): A list of integers specifying the number of units in each hidden layer.
         """
-        super(FCNVariationalNet, self).__init__()
+        super(BaseVariationalNet, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.model_name = model_name
@@ -215,8 +116,13 @@ class FCNVariationalNet(tf.keras.Model):
         # Return the reparameterized sample
         return eps * tf.sqrt(var) + mean
 
-class BayesianVariationalLowRankNet(tf.keras.Model):
-    """ Bayesian fully connected neural network with low-rank covariance structure. """
+class BaseVariationalLowRankNet(tf.keras.Model):
+    """Standard (non-Bayesian) variational network with low-rank covariance.
+    
+    Outputs a mean, diagonal variance, and a low-rank factor U so that the
+    covariance is Σ(z) = diag(var) + U Uᵀ.  BayesianVariationalLowRankNet
+    is the Bayesian counterpart of this class.
+    """
     def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256], rank=2):
         """
         Args:
@@ -226,281 +132,7 @@ class BayesianVariationalLowRankNet(tf.keras.Model):
             nb_units (list): Number of units per hidden layer.
             rank (int): Rank of the low-rank covariance matrix.
         """
-        super(BayesianVariationalLowRankNet, self).__init__()
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.model_name = model_name
-        self.nb_units = nb_units
-        self.rank = rank 
-
-        self.all_layers = []
-        self.norm_layer = tf.keras.layers.BatchNormalization()
-
-        def custom_prior_fn(dtype, shape, name, trainable, add_variable_fn):
-            """
-            Custom prior function that returns an Independent Normal distribution
-            with mean 0 and a small standard deviation (0.1).
-
-            Args:
-                dtype: The data type for the distribution parameters.
-                shape: The shape of the weight tensor.
-                name: A name for the variable (unused here).
-                trainable: Whether the variables are trainable (unused here).
-                add_variable_fn: A function for adding variables (unused here).
-
-            Returns:
-                A tfp.distributions.Independent distribution representing the prior.
-            """
-            # Create a Normal distribution with mean 0 and scale 0.1
-            prior_dist = tfp.distributions.Normal(
-                loc=tf.zeros(shape, dtype=dtype),
-                scale=tf.ones(shape, dtype=dtype)
-            )
-            # Wrap it as an Independent distribution, with the appropriate number of reinterpreted dimensions
-            return tfp.distributions.Independent(prior_dist, reinterpreted_batch_ndims=len(shape))
-        
-        kernel_prior_fn = lambda dtype, shape, name, trainable, add_variable_fn: tfp.distributions.Independent(
-            tfp.distributions.Normal(loc=tf.zeros(shape, dtype=dtype), scale=0.1),
-            reinterpreted_batch_ndims=len(shape)
-        )
-
-        # Define Bayesian layers for each fully connected layer
-        for i in range(len(nb_units)):
-            bayesian_layer = tfp.layers.DenseFlipout(
-                units=self.nb_units[i],
-                kernel_prior_fn=kernel_prior_fn,
-                activation=None
-            )
-            self.all_layers.append(bayesian_layer)
-
-        # Output layers
-        self.mean_layer = tfp.layers.DenseFlipout(
-            units=self.output_dim,
-            kernel_prior_fn=kernel_prior_fn,
-            activation=None
-        )
-
-        # Variance layer: Outputs per-dimension variance
-        self.var_layer = tfp.layers.DenseFlipout(
-            units=self.output_dim,  # Per-dimension variance
-            kernel_prior_fn=kernel_prior_fn,
-            activation=None
-        )
-
-        # Low-rank factor layer: Outputs (batch, output_dim, rank)
-        self.low_rank_layer = tfp.layers.DenseFlipout(
-            units=self.output_dim * self.rank,
-            kernel_prior_fn=kernel_prior_fn,
-            activation=None
-        )
-
-    def call(self, inputs, training=True):
-        """ Return the output of the Bayesian network. """
-        x = self.norm_layer(inputs)
-        for i, bayesian_layer in enumerate(self.all_layers):
-            with tf.name_scope(f"{self.model_name}_layer_{i+1}"):
-                x = bayesian_layer(x)
-                x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-        # Compute mean
-        with tf.name_scope(f"{self.model_name}_layer_output"):
-            mean = self.mean_layer(x)  # Shape: (batch, p)
-
-            # Per-dimension variance
-            var_raw = self.var_layer(x)  # Shape: (batch, p)
-            var_diag = tf.nn.softplus(var_raw) + 1e-6  # Ensure positive variance
-
-            # Low-rank matrix U(z)
-            U_flat = self.low_rank_layer(x)  # Shape: (batch, p * rank)
-            U = tf.reshape(U_flat, [-1, self.output_dim, self.rank])  # Shape: (batch, p, rank)
-
-        return mean, var_diag, U
-
-    def reparameterize(self, mean, var_diag, U):
-        """
-        Performs reparameterization using the low-rank structure:
-        z = μ + D^(1/2) * ε₁ + U * ε₂
-        """
-        batch_size = tf.shape(mean)[0]
-
-        # Sample ε₁ ~ N(0, I_p)
-        eps1 = tf.random.normal(shape=(batch_size, self.output_dim))
-
-        # Sample ε₂ ~ N(0, I_r)
-        eps2 = tf.random.normal(shape=(batch_size, self.rank)) # (batch, rank)
-
-        # Diagonal component
-        diag_sample = tf.sqrt(var_diag) * eps1  # (batch, output_dim)
-
-        # Low-rank component: batch matrix multiply U @ eps2[i]
-        eps2_expanded = tf.expand_dims(eps2, -1)  # (batch, rank, 1)
-        low_rank_sample = tf.matmul(U, eps2_expanded)  # (batch, output_dim, 1)
-        low_rank_sample = tf.squeeze(low_rank_sample, -1)  # (batch, output_dim)
-
-        # Final reparameterized sample
-        return mean + diag_sample + low_rank_sample
-    
-    def compute_covariance_inverse(self, var_diag, U):
-        """
-        Computes the inverse of the covariance matrix Σ(z) = diag(var_diag) + UU^T
-        using the Woodbury identity.
-        Args:
-            var_diag: Tensor of shape (batch, p), diagonal variance.
-            U: Tensor of shape (batch, p, rank), low-rank component.
-        Returns:
-            Sigma_inv: Tensor of shape (batch, p, p), inverse of covariance matrix.
-        """
-        # D_inv = diag(1/var_diag)
-        D_inv = tf.linalg.diag(1.0 / var_diag)  # Shape: (batch, p, p)
-
-        # Compute U^T D^-1: Each column of U is divided by sqrt(var_diag) (broadcasting)
-        U_T_D_inv = tf.transpose(U, perm=[0, 2, 1]) / tf.expand_dims(var_diag, axis=1)  # Shape: (batch, rank, p)
-
-        # Compute middle term: M = I + U^T D^-1 U
-        M = tf.matmul(U_T_D_inv, U)  # Shape: (batch, rank, rank)
-        M_inv = tf.linalg.inv(tf.eye(self.rank) + M)  # Shape: (batch, rank, rank)
-
-        # Compute Σ^{-1} using Woodbury identity: D^-1 - D^-1 U M^-1 U^T D^-1
-        Sigma_inv = D_inv - tf.matmul(tf.transpose(U_T_D_inv, perm=[0, 2, 1]), tf.matmul(M_inv, U_T_D_inv))
-
-        return Sigma_inv
-
-    def compute_log_det(self, var_diag, U):
-        """
-        Computes the log determinant of Σ(z) = diag(var_diag) + UU^T
-        using Sylvester's determinant theorem.
-
-        Args:
-            var_diag: Tensor of shape (batch, p), diagonal variance.
-            U: Tensor of shape (batch, p, rank), low-rank component.
-
-        Returns:
-            log_det: Tensor of shape (batch,), log determinant of Σ(z).
-        """
-        # log(det(D)) = sum(log(diagonal elements))
-        log_det_D = tf.reduce_sum(tf.math.log(var_diag), axis=-1)  # Shape: (batch,)
-
-        # Compute M = I + U^T D^-1 U
-        U_T_D_inv = tf.transpose(U, perm=[0, 2, 1]) / tf.expand_dims(var_diag, axis=1)  # Shape: (batch, rank, p)
-        M = tf.matmul(U_T_D_inv, U)  # Shape: (batch, rank, rank)
-
-        # log(det(I + M))
-        log_det_M = tf.linalg.logdet(tf.eye(self.rank) + M)  # Shape: (batch,)
-
-        # Apply Sylvester's theorem: log(det(Σ)) = log(det(D)) + log(det(I + M))
-        log_det = log_det_D + log_det_M
-
-        return log_det
-    
-class StandardDeterministicNet(tf.keras.Model):
-    """ A standard network with the same architecture as the BNN. """
-    def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256], rank=2):
-        super(StandardDeterministicNet, self).__init__()
-        # All parameters are identical to the BNN
-        self.input_dim = input_dim
-        self.output_dim = output_dim
-        self.model_name = model_name
-        self.nb_units = nb_units
-        self.rank = rank 
-
-        self.all_layers = []
-        # NOTE: BatchNormalization layer should be included if it was in the BNN
-        self.norm_layer = tf.keras.layers.BatchNormalization()
-
-        # Use standard Dense layers instead of DenseFlipout
-        for i in range(len(nb_units)):
-            dense_layer = tf.keras.layers.Dense(units=self.nb_units[i], activation=None)
-            self.all_layers.append(dense_layer)
-
-        # Output layers
-        self.mean_layer = tf.keras.layers.Dense(units=self.output_dim, activation=None)
-        self.var_layer = tf.keras.layers.Dense(units=self.output_dim, activation=None)
-        self.low_rank_layer = tf.keras.layers.Dense(units=self.output_dim * self.rank, activation=None)
-
-    def call(self, inputs, training=False):
-        # The call function has the exact same logic as the BNN
-        x = self.norm_layer(inputs, training=training)
-        for i, dense_layer in enumerate(self.all_layers):
-            with tf.name_scope(f"{self.model_name}_layer_{i+1}"):
-                x = dense_layer(x)
-                x = tf.keras.layers.LeakyReLU(alpha=0.2)(x)
-
-        with tf.name_scope(f"{self.model_name}_layer_output"):
-            mean = self.mean_layer(x)
-            var_raw = self.var_layer(x)
-            var_diag = tf.nn.softplus(var_raw) + 1e-3
-            U_flat = self.low_rank_layer(x)
-            U = tf.reshape(U_flat, [-1, self.output_dim, self.rank])
-            cov_matrix = tf.matmul(U, U, transpose_b=True)
-            diag_matrix = tf.linalg.diag(var_diag)
-            full_cov_matrix = cov_matrix + diag_matrix
-        return mean, var_diag, full_cov_matrix, U
-    
-    def compute_covariance_inverse(self, var_diag, U):
-        """
-        Computes the inverse of the covariance matrix Σ(z) = diag(var_diag) + UU^T
-        using the Woodbury identity.
-        Args:
-            var_diag: Tensor of shape (batch, p), diagonal variance.
-            U: Tensor of shape (batch, p, rank), low-rank component.
-        Returns:
-            Sigma_inv: Tensor of shape (batch, p, p), inverse of covariance matrix.
-        """
-        # D_inv = diag(1/var_diag)
-        D_inv = tf.linalg.diag(1.0 / var_diag)  # Shape: (batch, p, p)
-
-        # Compute U^T D^-1: Each column of U is divided by sqrt(var_diag) (broadcasting)
-        U_T_D_inv = tf.transpose(U, perm=[0, 2, 1]) / tf.expand_dims(var_diag, axis=1)  # Shape: (batch, rank, p)
-
-        # Compute middle term: M = I + U^T D^-1 U
-        M = tf.matmul(U_T_D_inv, U)  # Shape: (batch, rank, rank)
-        M_inv = tf.linalg.inv(tf.eye(self.rank) + M)  # Shape: (batch, rank, rank)
-
-        # Compute Σ^{-1} using Woodbury identity: D^-1 - D^-1 U M^-1 U^T D^-1
-        Sigma_inv = D_inv - tf.matmul(tf.transpose(U_T_D_inv, perm=[0, 2, 1]), tf.matmul(M_inv, U_T_D_inv))
-
-        return Sigma_inv
-
-    def compute_log_det(self, var_diag, U):
-        """
-        Computes the log determinant of Σ(z) = diag(var_diag) + UU^T
-        using Sylvester's determinant theorem.
-
-        Args:
-            var_diag: Tensor of shape (batch, p), diagonal variance.
-            U: Tensor of shape (batch, p, rank), low-rank component.
-
-        Returns:
-            log_det: Tensor of shape (batch,), log determinant of Σ(z).
-        """
-        # log(det(D)) = sum(log(diagonal elements))
-        log_det_D = tf.reduce_sum(tf.math.log(var_diag), axis=-1)  # Shape: (batch,)
-
-        # Compute M = I + U^T D^-1 U
-        U_T_D_inv = tf.transpose(U, perm=[0, 2, 1]) / tf.expand_dims(var_diag, axis=1)  # Shape: (batch, rank, p)
-        M = tf.matmul(U_T_D_inv, U)  # Shape: (batch, rank, rank)
-
-        # log(det(I + M))
-        log_det_M = tf.linalg.logdet(tf.eye(self.rank) + M)  # Shape: (batch,)
-
-        # Apply Sylvester’s theorem: log(det(Σ)) = log(det(D)) + log(det(I + M))
-        log_det = log_det_D + log_det_M
-
-        return log_det
-
-
-class FCNLowRankNet(tf.keras.Model):
-    """ Fully connected neural network with low-rank covariance structure (non-Bayesian version). """
-    def __init__(self, input_dim, output_dim, model_name, nb_units=[256, 256, 256], rank=2):
-        """
-        Args:
-            input_dim (int): Dimension of input features.
-            output_dim (int): Dimension of output features.
-            model_name (str): Name of the model.
-            nb_units (list): Number of units per hidden layer.
-            rank (int): Rank of the low-rank covariance matrix.
-        """
-        super(FCNLowRankNet, self).__init__()
+        super(BaseVariationalLowRankNet, self).__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.model_name = model_name
@@ -644,7 +276,7 @@ class FCNLowRankNet(tf.keras.Model):
 
     def transfer_weights_from_bayesian(self, bayesian_model, method='mean'):
         """
-        UPDATED: Transfers weights from a BayesianVariationalLowRankNet to this FCN model.
+        Transfers weights from a BayesianVariationalLowRankNet to this model.
 
         This function can operate in two modes, controlled by the `method` argument:
         - 'mean': Extracts the posterior mean of the Bayesian weights and assigns them.
@@ -704,7 +336,10 @@ class FCNLowRankNet(tf.keras.Model):
         print(f"Weight transfer using '{method}' method completed successfully!")
 
 class Discriminator(tf.keras.Model):
-    """Discriminator network.
+    """Fully connected discriminator network.
+    
+    Outputs a scalar logit for each input using tanh activations
+    and optional batch normalization.
     """
     def __init__(self, input_dim, model_name, nb_units=[256, 256], batchnorm=True):  
         super(Discriminator, self).__init__()
@@ -749,15 +384,15 @@ class Discriminator(tf.keras.Model):
             output = fc_layer(x)
         return output
     
-class MCMCBayesianNet(BaseFullyConnectedNet):
+class MCMCFullyConnectedNet(BaseFullyConnectedNet):
     """
-    A fully connected network intended for use with MCMC.
+    A fully connected network intended for use in FullMCMCCausalBGM.
     It is structurally identical to BaseFullyConnectedNet, but we add helper
     methods to compute the log prior and to perform a forward pass with an
     explicit set of weights.
     """
     def __init__(self, *args, **kwargs):
-        super(MCMCBayesianNet, self).__init__(*args, **kwargs)
+        super(MCMCFullyConnectedNet, self).__init__(*args, **kwargs)
 
     @tf.function
     def call_with_weights(self, inputs, flattened_weights):
@@ -806,14 +441,12 @@ class MCMCBayesianNet(BaseFullyConnectedNet):
         prior_dist = tfp.distributions.Normal(loc=0., scale=1.)
         return tf.reduce_sum(prior_dist.log_prob(flattened_weights))
 
-    
-# --- NEW HELPER FUNCTION TO RUN HMC ---
 def run_mcmc_for_net(net, x_train, y_train, likelihood_fn, initial_state, num_samples=1000, num_burnin_steps=500):
     """
     Runs Hamiltonian Monte Carlo to sample weights for a given network.
 
     Args:
-        net: An instance of MCMCBayesianNet.
+        net: An instance of MCMCFullyConnectedNet.
         x_train: Training input data.
         y_train: Training target data.
         likelihood_fn: A function(y_true, y_pred) that returns the log-likelihood.

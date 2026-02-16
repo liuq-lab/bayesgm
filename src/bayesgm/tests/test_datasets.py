@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 from bayesgm.datasets.base_sampler import Base_sampler
-from bayesgm.datasets.data_sampler import Semi_acic_sampler, Sim_Hirano_Imbens_sampler, Sim_Sun_sampler, Sim_Colangelo_sampler
+from bayesgm.datasets.causal_samplers import Semi_acic_sampler, Sim_Hirano_Imbens_sampler, Sim_Sun_sampler, Sim_Colangelo_sampler
 
 @pytest.fixture
 def base_sampler_data():

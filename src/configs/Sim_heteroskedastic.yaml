@@ -3,7 +3,7 @@ dataset: Sim_heteroskedastic
 output_dir: '.'
 save_res: True
 save_model: True
-use_bnn: True
+use_bnn: False
 rank: 2
 
 # Parameters for iterative updating algorithm
@@ -14,11 +14,11 @@ lr_z: 0.005
 g_units: [64,64,64,64,64]
 
 # Parameters for EGM initialization
-kl_weight: 0.0001
+kl_weight: 0.00005
 lr: 0.001
 g_d_freq: 1
 use_z_rec: True
-alpha: 0.1
+alpha: 0.0
 gamma: 0
 e_units: [64,64,64,64,64]
 dz_units: [64,32,8]

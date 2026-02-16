@@ -3,7 +3,7 @@ dataset: MNIST
 output_dir: '.'
 save_res: True
 save_model: True
-use_bnn: True
+use_bnn: False
 
 # Parameters for iterative updating algorithm
 z_dim: 10

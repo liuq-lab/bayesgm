@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="bayesgm", 
-    version="0.3.0",
+    version="1.0.0",
     author="Qiao Liu",
     author_email="liuqiao@stanford.edu",
     description="An AI-powered Bayesian generative modeling approach",
@@ -28,6 +28,7 @@ setuptools.setup(
     python_requires='>=3.7, <3.11',
     entry_points={
     'console_scripts': [
-        'causalBGM = bayesgm.cli.cli:main',
+        'bayesgm = bayesgm.cli.cli:main',
+        'causalBGM = bayesgm.cli.cli:main_causalbgm',
     ]},
 )

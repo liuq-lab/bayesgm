@@ -1,15 +1,13 @@
 import tensorflow as tf
 import tensorflow_probability as tfp
-from .base import BaseFullyConnectedNet,Discriminator,BayesianFullyConnectedNet, MCMCBayesianNet, run_mcmc_for_net
+from .networks import BaseFullyConnectedNet, Discriminator, BayesianFullyConnectedNet, MCMCFullyConnectedNet, run_mcmc_for_net
 import numpy as np
-import copy
-from bayesgm.utils.helpers import Gaussian_sampler
+from bayesgm.datasets import Gaussian_sampler
 from bayesgm.utils.data_io import save_data
 import dateutil.tz
 import datetime
 import os
 from tqdm import tqdm
-from sklearn.cluster import KMeans
 
 class CausalBGM(object):
     def __init__(self, params, timestamp=None, random_seed=None):
@@ -328,14 +326,11 @@ class CausalBGM(object):
         return e_loss_adv, l2_loss_v, l2_loss_z, l2_loss_x, l2_loss_y, g_e_loss
     
 
-    def egm_init(self, data, n_iter=10000, batch_size=32, batches_per_eval=500, verbose=1):
+    def egm_init(self, data, egm_n_iter=10000, batch_size=32, egm_batches_per_eval=500, verbose=1):
         data_x, data_y, data_v = data
         
-        # Set the EGM initialization indicator to be True
-        self.params['use_egm_init'] = True
-        
         print('EGM Initialization Starts ...')
-        for batch_iter in range(n_iter+1):
+        for batch_iter in range(egm_n_iter+1):
             # Update model parameters of Discriminator
             for _ in range(self.params['g_d_freq']):
                 batch_idx = np.random.choice(len(data_x), batch_size, replace=False)
@@ -350,7 +345,7 @@ class CausalBGM(object):
             batch_y = data_y[batch_idx,:]
             batch_v = data_v[batch_idx,:]
             e_loss_adv, l2_loss_v, l2_loss_z, l2_loss_x, l2_loss_y, g_e_loss = self.train_gen_step(batch_z, batch_v, batch_x, batch_y)
-            if batch_iter % batches_per_eval == 0:
+            if batch_iter % egm_batches_per_eval == 0:
                 
                 loss_contents = (
                     'EGM Initialization Iter [%d] : e_loss_adv [%.4f], l2_loss_v [%.4f], l2_loss_z [%.4f], '
@@ -368,7 +363,7 @@ class CausalBGM(object):
 
     def fit(self, data,
             batch_size=32, epochs=100, epochs_per_eval=5, startoff=0,
-            verbose=1, save_format='txt'):
+            use_egm_init=True, egm_n_iter=30000, egm_batches_per_eval=500, save_format='txt', verbose=1):
         
         data_x, data_y, data_v = data
         
@@ -377,7 +372,8 @@ class CausalBGM(object):
             f_params.write(str(self.params))
             f_params.close()
         
-        if 'use_egm_init' in self.params and self.params['use_egm_init']:
+        if use_egm_init:
+            self.egm_init(data, egm_n_iter=egm_n_iter, egm_batches_per_eval=egm_batches_per_eval, batch_size=batch_size, verbose=verbose)
             print('Initialize latent variables Z with e(V)...')
             data_z_init = self.e_net(data_v)
         else:
@@ -423,14 +419,9 @@ class CausalBGM(object):
                     batch_bar.update(1)
             
             # Evaluate the full training data and print metrics for the epoch
-            if epoch % epochs_per_eval == 0 and self.params['save_res']:
+            if epoch % epochs_per_eval == 0:
                 causal_pre, mse_x, mse_y, mse_v, data_x_pred, data_y_pred, data_v_pred = self.evaluate(data = data, data_z = self.data_z)
                 causal_pre = causal_pre.numpy()
-                
-                np.savez('{}/pred_data_at_{}.npz'.format(self.save_dir, epoch), 
-                         data_x_pred=data_x_pred.numpy(), 
-                         data_y_pred=data_y_pred.numpy(), 
-                         data_v_pred=data_v_pred.numpy())
                 
                 if verbose:
                     print('Epoch [%d/%d]: MSE_x: %.4f, MSE_y: %.4f, MSE_v: %.4f\n' % (epoch, epochs, mse_x, mse_y, mse_v))
@@ -470,7 +461,10 @@ class CausalBGM(object):
             return ite_pre, mse_x, mse_y, mse_v, data_x_pred, data_y_pred, data_v_pred
         else:
             # Average dose response function (ADRF)
-            x_values = tf.linspace(self.params['x_min'], self.params['x_max'], nb_intervals)
+            # Compute 5% and 95% quantiles from data_x
+            x_min = tfp.stats.percentile(data_x, 5.0)
+            x_max = tfp.stats.percentile(data_x, 95.0)
+            x_values = tf.linspace(x_min, x_max, nb_intervals)
             
             def compute_dose_response(x):
                 data_x_tile = tf.fill([tf.shape(data_x)[0], 1], x)
@@ -489,35 +483,32 @@ class CausalBGM(object):
         - For binary treatment, the Individual Treatment Effect (ITE) is estimated.
         - For continuous treatment, the Average Dose Response Function (ADRF) is estimated.
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         data : list
             Input data containing [data_x, data_y, data_v].
-        alpha : float
-            Significance level for the posterior interval (default: 0.01).
-        n_mcmc : int
-            Number of posterior MCMC samples to draw (default: 3000).
+        alpha : float, default=0.01
+            Significance level for the posterior interval.
+        n_mcmc : int, default=3000
+            Number of posterior MCMC samples to draw.
         x_values : list of floats or np.ndarray
-            Treatment values for dose-response function to be predicted (default: None).
-        q_sd : float
-            Standard deviation for the proposal distribution used in Metropolis-Hastings (MH) sampling (default: 1.0).
-        sample_y : bool
-            Whether to consider the variance function in the outcome generative model (default: True).
-        bs : int
-            Batch size for processing posterior samples to improve efficiency (default: 3000).
+            Treatment values for dose-response prediction.
+            Required for continuous treatment.
+        q_sd : float, default=1.0
+            Proposal standard deviation used by the Metropolis-Hastings sampler.
+        sample_y : bool, default=True
+            Whether to sample from the outcome variance model.
+        bs : int, default=3000
+            Batch size for processing posterior samples.
 
-        Returns:
-        --------
-        Binary treatment setting:
-            ITE : np.ndarray
-                Point estimates of the Individual Treatment Effect, with shape (n,).
-            pos_int : np.ndarray
-                Posterior intervals for the ITE with shape (n, 2), representing [lower bound, upper bound].
-        Continuous treatment setting:
-            ADRF : np.ndarray
-                Point estimates of the Average Dose-Response Function, with shape (len(x_values),).
-            pos_int : np.ndarray
-                Posterior intervals for the ADRF with shape (len(x_values), 2), representing [lower bound, upper bound].
+        Returns
+        -------
+        effect : np.ndarray
+            Binary treatment: point estimate of ITE with shape ``(n,)``.
+            Continuous treatment: ADRF estimate with shape ``(len(x_values),)``.
+        pos_int : np.ndarray
+            Posterior interval with shape ``(n, 2)`` for ITE, or
+            ``(len(x_values), 2)`` for ADRF.
         """
         assert 0 < alpha < 1, "The significance level 'alpha' must be greater than 0 and less than 1."
 
@@ -797,9 +788,13 @@ class CausalBGM(object):
         return np.array(samples)
     
 
-class iCausalBGM(object):
+class IdentifiableCausalBGM(CausalBGM):
+    """Identifiable CausalBGM using nonlinear ICA theory (iVAE).
+    
+    Achieves identifiability under mild conditions by introducing an auxiliary 
+    variable and conditioning the latent prior on it.
+    """
     def __init__(self, params, timestamp=None, random_seed=None):
-        super(iCausalBGM, self).__init__()
         self.params = params
         self.timestamp = timestamp
 
@@ -896,12 +891,8 @@ class iCausalBGM(object):
             self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
             print('Latest checkpoint restored!!')
 
-    def get_config(self):
-        """Get the parameters iCausalBGM model."""
-        return {"params": self.params}
-
     def initialize_nets(self, print_summary=False):
-        """Initialize all the networks in iCausalBGM."""
+        """Initialize all the networks in IdentifiableCausalBGM."""
         self.g_net(np.zeros((1, sum(self.params['z_dims']))))
         self.f_net(np.zeros((1, self.params['z_dims'][0] + self.params['z_dims'][1] + 1)))
         self.h_net(np.zeros((1, self.params['z_dims'][0] + self.params['z_dims'][2])))
@@ -912,85 +903,6 @@ class iCausalBGM(object):
             print(self.f_net.summary())
             print(self.h_net.summary())
             print(self.prior_net.summary()) # iVAE modification
-
-    # Update generative model for covariates V (No changes needed)
-    @tf.function
-    def update_g_net(self, data_z, data_v, eps=1e-6):
-        with tf.GradientTape() as gen_tape:
-            g_net_output = self.g_net(data_z)
-            mu_v = g_net_output[:,:self.params['v_dim']]
-            if 'sigma_v' in self.params:
-                sigma_square_v = self.params['sigma_v']**2
-            else:
-                sigma_square_v = tf.nn.softplus(g_net_output[:,-1]) + eps
-            #loss = -log(p(x|z))
-            loss_mse = tf.reduce_mean((data_v - mu_v)**2)
-            loss_v = tf.reduce_sum((data_v - mu_v)**2, axis=1)/(2*sigma_square_v) + \
-                     self.params['v_dim'] * tf.math.log(sigma_square_v)/2
-            loss_v = tf.reduce_mean(loss_v)
-
-            if self.params['use_bnn']:
-                loss_kl = sum(self.g_net.losses)
-                loss_v += loss_kl * self.params['kl_weight']
-
-        g_gradients = gen_tape.gradient(loss_v, self.g_net.trainable_variables)
-        self.g_optimizer.apply_gradients(zip(g_gradients, self.g_net.trainable_variables))
-        return loss_v, loss_mse
-
-    # Update generative model for treatment X (No changes needed)
-    @tf.function
-    def update_h_net(self, data_z, data_x, eps=1e-6):
-        with tf.GradientTape() as gen_tape:
-            data_z0 = data_z[:,:self.params['z_dims'][0]]
-            data_z2 = data_z[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
-            h_net_output = self.h_net(tf.concat([data_z0, data_z2], axis=-1))
-            mu_x = h_net_output[:,:1]
-            if self.params['binary_treatment']:
-                loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=data_x,
-                                                                              logits=mu_x))
-                loss_x = loss
-            else:
-                if 'sigma_x' in self.params:
-                    sigma_square_x = self.params['sigma_x']**2
-                else:
-                    sigma_square_x = tf.nn.softplus(h_net_output[:,-1]) + eps
-                loss = tf.reduce_mean((data_x - mu_x)**2)
-                loss_x = tf.reduce_sum((data_x - mu_x)**2, axis=1)/(2*sigma_square_x) + \
-                         tf.math.log(sigma_square_x)/2
-                loss_x = tf.reduce_mean(loss_x)
-
-            if self.params['use_bnn']:
-                loss_kl = sum(self.h_net.losses)
-                loss_x += loss_kl * self.params['kl_weight']
-
-        h_gradients = gen_tape.gradient(loss_x, self.h_net.trainable_variables)
-        self.h_optimizer.apply_gradients(zip(h_gradients, self.h_net.trainable_variables))
-        return loss_x, loss
-
-    # Update generative model for outcome Y (No changes needed)
-    @tf.function
-    def update_f_net(self, data_z, data_x, data_y, eps=1e-6):
-        with tf.GradientTape() as gen_tape:
-            data_z0 = data_z[:,:self.params['z_dims'][0]]
-            data_z1 = data_z[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
-            f_net_output = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))
-            mu_y = f_net_output[:,:1]
-            if 'sigma_y' in self.params:
-                sigma_square_y = self.params['sigma_y']**2
-            else:
-                sigma_square_y = tf.nn.softplus(f_net_output[:,-1]) + eps
-            loss_mse = tf.reduce_mean((data_y - mu_y)**2)
-            loss_y = tf.reduce_sum((data_y - mu_y)**2, axis=1)/(2*sigma_square_y) + \
-                     tf.math.log(sigma_square_y)/2
-            loss_y = tf.reduce_mean(loss_y)
-
-            if self.params['use_bnn']:
-                loss_kl = sum(self.f_net.losses)
-                loss_y += loss_kl * self.params['kl_weight']
-
-        f_gradients = gen_tape.gradient(loss_y, self.f_net.trainable_variables)
-        self.f_optimizer.apply_gradients(zip(f_gradients, self.f_net.trainable_variables))
-        return loss_y, loss_mse
 
     # iVAE modification: Update posterior of latent variables Z and prior network parameters
     @tf.function
@@ -1075,76 +987,7 @@ class iCausalBGM(object):
 
         return loss_postrior_z
 
-    #################################### EGM initialization ###########################################
-    # EGM pre-training code (train_disc_step, train_gen_step, egm_init) remains unchanged.
-    # Note: EGM initialization pre-trains e_net(V) -> Z. This Z might not align perfectly
-    # with the structured prior p(Z|U) initially, but the main training loop will adjust Z.
-    @tf.function
-    def train_disc_step(self, data_z, data_v):
-        epsilon_z = tf.random.uniform([],minval=0., maxval=1.)
-        with tf.GradientTape(persistent=True) as disc_tape:
-            with tf.GradientTape() as gp_tape:
-                data_z_ = self.e_net(data_v)
-                data_z_hat = data_z*epsilon_z + data_z_*(1-epsilon_z)
-                data_dz_hat = self.dz_net(data_z_hat)
-
-            data_dz_ = self.dz_net(data_z_)
-            data_dz = self.dz_net(data_z)
-            dz_loss = -tf.reduce_mean(data_dz) + tf.reduce_mean(data_dz_)
-
-            grad_z = gp_tape.gradient(data_dz_hat, data_z_hat)
-            grad_norm_z = tf.sqrt(tf.reduce_sum(tf.square(grad_z), axis=1))
-            gpz_loss = tf.reduce_mean(tf.square(grad_norm_z - 1.0))
-            d_loss = dz_loss + 10 * gpz_loss
-
-        d_gradients = disc_tape.gradient(d_loss, self.dz_net.trainable_variables)
-        self.d_pre_optimizer.apply_gradients(zip(d_gradients, self.dz_net.trainable_variables))
-        return dz_loss, d_loss
-
-    @tf.function
-    def train_gen_step(self, data_z, data_v, data_x, data_y):
-        with tf.GradientTape(persistent=True) as gen_tape:
-            sigma_square_loss = 0
-            data_v_ = self.g_net(data_z)[:,:self.params['v_dim']]
-            sigma_square_loss += tf.reduce_mean(tf.square(self.g_net(data_z)[:,-1]))
-            data_z_ = self.e_net(data_v)
-
-            data_z0 = data_z_[:,:self.params['z_dims'][0]]
-            data_z1 = data_z_[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
-            data_z2 = data_z_[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
-
-            data_z__= self.e_net(data_v_)
-            data_v__ = self.g_net(data_z_)[:,:self.params['v_dim']]
-
-            data_dz_ = self.dz_net(data_z_)
-
-            l2_loss_v = tf.reduce_mean((data_v - data_v__)**2)
-            l2_loss_z = tf.reduce_mean((data_z - data_z__)**2)
-
-            e_loss_adv = -tf.reduce_mean(data_dz_)
-
-            data_y_ = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,:1]
-            sigma_square_loss += tf.reduce_mean(
-                tf.square(self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,-1]))
-            data_x_ = self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,:1]
-            sigma_square_loss += tf.reduce_mean(
-                tf.square(self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,-1]))
-
-            if self.params['binary_treatment']:
-                l2_loss_x = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=data_x,
-                                                                                  logits=data_x_))
-            else:
-                l2_loss_x = tf.reduce_mean((data_x_ - data_x)**2)
-            l2_loss_y = tf.reduce_mean((data_y_ - data_y)**2)
-            g_e_loss = e_loss_adv+(l2_loss_v + self.params['use_z_rec']*l2_loss_z) \
-                       + (l2_loss_x+l2_loss_y) + 0.001 * sigma_square_loss
-
-        g_e_gradients = gen_tape.gradient(g_e_loss, self.g_net.trainable_variables+self.e_net.trainable_variables+\
-                                          self.f_net.trainable_variables+self.h_net.trainable_variables)
-        self.g_pre_optimizer.apply_gradients(zip(g_e_gradients, self.g_net.trainable_variables+self.e_net.trainable_variables+\
-                                                 self.f_net.trainable_variables+self.h_net.trainable_variables))
-        return e_loss_adv, l2_loss_v, l2_loss_z, l2_loss_x, l2_loss_y, g_e_loss
-
+#################################### EGM initialization ###########################################
     def egm_init(self, data, n_iter=10000, batch_size=32, batches_per_eval=500, verbose=1):
         data_x, data_y, data_v = data
 
@@ -1310,7 +1153,10 @@ class iCausalBGM(object):
             ite_pre = y_pred_pos-y_pred_neg
             return ite_pre, mse_x, mse_y, mse_v # Returns 4 values
         else:
-            x_values = tf.linspace(self.params['x_min'], self.params['x_max'], nb_intervals)
+            # Compute 5% and 95% quantiles from data_x
+            x_min = tfp.stats.percentile(data_x, 5.0)
+            x_max = tfp.stats.percentile(data_x, 95.0)
+            x_values = tf.linspace(x_min, x_max, nb_intervals)
 
             def compute_dose_response(x):
                 data_x_tile = tf.fill([tf.shape(data_x)[0], 1], x)
@@ -1562,9 +1408,11 @@ class iCausalBGM(object):
     
     
     
-class CausalBGM_MCMC(object):
+class FullMCMCCausalBGM(CausalBGM):
+    """CausalBGM with full MCMC sampling for both individual latent variables 
+    and model parameters.
+    """
     def __init__(self, params, timestamp=None, random_seed=None):
-        super(CausalBGM_MCMC, self).__init__()
         self.params = params
         self.timestamp = timestamp
         if random_seed is not None:
@@ -1572,13 +1420,13 @@ class CausalBGM_MCMC(object):
             os.environ['TF_DETERMINISTIC_OPS'] = '1'
             tf.config.experimental.enable_op_determinism()
         if self.params['use_bnn']:
-            self.g_net = MCMCBayesianNet(input_dim=sum(params['z_dims']),output_dim = params['v_dim']+1, 
+            self.g_net = MCMCFullyConnectedNet(input_dim=sum(params['z_dims']),output_dim = params['v_dim']+1, 
                                            model_name='g_net', nb_units=params['g_units'])
             self.e_net = BayesianFullyConnectedNet(input_dim=params['v_dim'],output_dim = sum(params['z_dims']), 
                                             model_name='e_net', nb_units=params['e_units'])
-            self.f_net = MCMCBayesianNet(input_dim=params['z_dims'][0]+params['z_dims'][1]+1,
+            self.f_net = MCMCFullyConnectedNet(input_dim=params['z_dims'][0]+params['z_dims'][1]+1,
                                            output_dim = 2, model_name='f_net', nb_units=params['f_units'])
-            self.h_net = MCMCBayesianNet(input_dim=params['z_dims'][0]+params['z_dims'][2],
+            self.h_net = MCMCFullyConnectedNet(input_dim=params['z_dims'][0]+params['z_dims'][2],
                                            output_dim = 2, model_name='h_net', nb_units=params['h_units'])
         else:
             self.g_net = BaseFullyConnectedNet(input_dim=sum(params['z_dims']),output_dim = params['v_dim']+1, 
@@ -1636,248 +1484,6 @@ class CausalBGM_MCMC(object):
         if self.ckpt_manager.latest_checkpoint:
             self.ckpt.restore(self.ckpt_manager.latest_checkpoint)
             print ('Latest checkpoint restored!!') 
-
-    def get_config(self):
-        """Get the parameters CausalBGM model."""
-
-        return {
-                "params": self.params,
-        }
-
-    def initialize_nets(self, print_summary = False):
-        """Initialize all the networks in CausalBGM."""
-
-        self.g_net(np.zeros((1, sum(self.params['z_dims']))))
-        self.f_net(np.zeros((1, self.params['z_dims'][0]+self.params['z_dims'][1]+1)))
-        self.h_net(np.zeros((1, self.params['z_dims'][0]+self.params['z_dims'][2])))
-        if print_summary:
-            print(self.g_net.summary())
-            print(self.f_net.summary())    
-            print(self.h_net.summary()) 
-
-    # Update generative model for covariates V
-    @tf.function
-    def update_g_net(self, data_z, data_v, eps=1e-6):
-        with tf.GradientTape() as gen_tape:
-            g_net_output = self.g_net(data_z)
-            mu_v = g_net_output[:,:self.params['v_dim']]
-            if 'sigma_v' in self.params:
-                sigma_square_v = self.params['sigma_v']**2
-            else:
-                sigma_square_v = tf.nn.softplus(g_net_output[:,-1]) + eps
-            #loss = -log(p(x|z))
-            loss_mse = tf.reduce_mean((data_v - mu_v)**2)
-            loss_v = tf.reduce_sum((data_v - mu_v)**2, axis=1)/(2*sigma_square_v) + \
-                    self.params['v_dim'] * tf.math.log(sigma_square_v)/2
-            loss_v = tf.reduce_mean(loss_v)
-            
-            if self.params['use_bnn']:
-                loss_kl = sum(self.g_net.losses)
-                loss_v += loss_kl * self.params['kl_weight']
-
-        # Calculate the gradients for generators and discriminators
-        g_gradients = gen_tape.gradient(loss_v, self.g_net.trainable_variables)
-        
-        # Apply the gradients to the optimizer
-        self.g_optimizer.apply_gradients(zip(g_gradients, self.g_net.trainable_variables))
-        return loss_v, loss_mse
-    
-    # Update generative model for treatment X
-    @tf.function
-    def update_h_net(self, data_z, data_x, eps=1e-6):
-        with tf.GradientTape() as gen_tape:
-            data_z0 = data_z[:,:self.params['z_dims'][0]]
-            data_z2 = data_z[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
-            h_net_output = self.h_net(tf.concat([data_z0, data_z2], axis=-1))
-            mu_x = h_net_output[:,:1]
-            if self.params['binary_treatment']:
-                loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=data_x, 
-                                                       logits=mu_x))
-                loss_x =  loss
-            else:
-                if 'sigma_x' in self.params:
-                    sigma_square_x = self.params['sigma_x']**2
-                else:
-                    sigma_square_x = tf.nn.softplus(h_net_output[:,-1]) + eps
-                #loss = -log(p(x|z))
-                loss = tf.reduce_mean((data_x - mu_x)**2)
-                loss_x = tf.reduce_sum((data_x - mu_x)**2, axis=1)/(2*sigma_square_x) + \
-                        tf.math.log(sigma_square_x)/2
-                loss_x = tf.reduce_mean(loss_x)
-
-            if self.params['use_bnn']:
-                loss_kl = sum(self.h_net.losses)
-                loss_x += loss_kl * self.params['kl_weight']
-                
-        # Calculate the gradients for generators and discriminators
-        h_gradients = gen_tape.gradient(loss_x, self.h_net.trainable_variables)
-        
-        # Apply the gradients to the optimizer
-        self.h_optimizer.apply_gradients(zip(h_gradients, self.h_net.trainable_variables))
-        return loss_x, loss
-    
-    # Update generative model for outcome Y
-    @tf.function
-    def update_f_net(self, data_z, data_x, data_y, eps=1e-6):
-        with tf.GradientTape() as gen_tape:
-            data_z0 = data_z[:,:self.params['z_dims'][0]]
-            data_z1 = data_z[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
-            f_net_output = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))
-            mu_y = f_net_output[:,:1]
-            if 'sigma_y' in self.params:
-                sigma_square_y = self.params['sigma_y']**2
-            else:
-                sigma_square_y = tf.nn.softplus(f_net_output[:,-1]) + eps
-            #loss = -log(p(y|z,x))
-            loss_mse = tf.reduce_mean((data_y - mu_y)**2)
-            loss_y = tf.reduce_sum((data_y - mu_y)**2, axis=1)/(2*sigma_square_y) + \
-                    tf.math.log(sigma_square_y)/2
-            loss_y = tf.reduce_mean(loss_y)
-            
-            if self.params['use_bnn']:
-                loss_kl = sum(self.f_net.losses)
-                loss_y += loss_kl * self.params['kl_weight']
-
-        # Calculate the gradients for generators and discriminators
-        f_gradients = gen_tape.gradient(loss_y, self.f_net.trainable_variables)
-        
-        # Apply the gradients to the optimizer
-        self.f_optimizer.apply_gradients(zip(f_gradients, self.f_net.trainable_variables))
-        return loss_y, loss_mse
-    
-    # Update posterior of latent variables Z
-    @tf.function
-    def update_latent_variable_sgd(self, data_x, data_y, data_v, data_z, eps=1e-6):
-        with tf.GradientTape() as tape:
-            
-            data_z0 = data_z[:,:self.params['z_dims'][0]]
-            data_z1 = data_z[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
-            data_z2 = data_z[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
-            
-            # logp(v|z) for covariate model
-            mu_v = self.g_net(data_z)[:,:self.params['v_dim']]
-            if 'sigma_v' in self.params:
-                sigma_square_v = self.params['sigma_v']**2
-            else:
-                sigma_square_v = tf.nn.softplus(self.g_net(data_z)[:,-1]) + eps
-                
-            loss_pv_z = tf.reduce_sum((data_v - mu_v)**2, axis=1)/(2*sigma_square_v) + \
-                    self.params['v_dim'] * tf.math.log(sigma_square_v)/2
-            loss_pv_z = tf.reduce_mean(loss_pv_z)
-            
-            # log(x|z) for treatment model
-            mu_x = self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,:1]
-            if 'sigma_x' in self.params:
-                sigma_square_x = self.params['sigma_x']**2
-            else:
-                sigma_square_x = tf.nn.softplus(self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,-1]) + eps
-
-            if self.params['binary_treatment']:
-                loss_px_z = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=data_x, 
-                                                       logits=mu_x))
-            else:
-                loss_px_z = tf.reduce_sum((data_x - mu_x)**2, axis=1)/(2*sigma_square_x) + \
-                        tf.math.log(sigma_square_x)/2
-                loss_px_z = tf.reduce_mean(loss_px_z)
-                
-            # log(y|z,x) for outcome model
-            mu_y = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,:1]
-            if 'sigma_y' in self.params:
-                sigma_square_y = self.params['sigma_y']**2
-            else:
-                sigma_square_y = tf.nn.softplus(self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,-1]) + eps
-
-            loss_py_zx = tf.reduce_sum((data_y - mu_y)**2, axis=1)/(2*sigma_square_y) + \
-                    tf.math.log(sigma_square_y)/2
-            loss_py_zx = tf.reduce_mean(loss_py_zx)
-
-            loss_prior_z =  tf.reduce_sum(data_z**2, axis=1)/2
-            loss_prior_z = tf.reduce_mean(loss_prior_z)
-
-            loss_postrior_z = loss_pv_z + loss_px_z + loss_py_zx + loss_prior_z
-            #loss_postrior_z = loss_postrior_z/self.params['v_dim']
-
-        # Calculate the gradients
-        posterior_gradients = tape.gradient(loss_postrior_z, [data_z])
-        # Apply the gradients to the optimizer
-        self.posterior_optimizer.apply_gradients(zip(posterior_gradients, [data_z]))
-        return loss_postrior_z
-    
-#################################### EGM initialization ###########################################
-    @tf.function
-    def train_disc_step(self, data_z, data_v):
-        epsilon_z = tf.random.uniform([],minval=0., maxval=1.)
-        with tf.GradientTape(persistent=True) as disc_tape:
-            with tf.GradientTape() as gp_tape:
-                data_z_ = self.e_net(data_v)
-                data_z_hat = data_z*epsilon_z + data_z_*(1-epsilon_z)
-                data_dz_hat = self.dz_net(data_z_hat)
-
-            data_dz_ = self.dz_net(data_z_)
-            data_dz = self.dz_net(data_z)
-            dz_loss = -tf.reduce_mean(data_dz) + tf.reduce_mean(data_dz_)
-
-            # Calculate gradient penalty 
-            grad_z = gp_tape.gradient(data_dz_hat, data_z_hat)
-            grad_norm_z = tf.sqrt(tf.reduce_sum(tf.square(grad_z), axis=1))
-            gpz_loss = tf.reduce_mean(tf.square(grad_norm_z - 1.0))
-            
-            d_loss = dz_loss + 10 * gpz_loss
-
-        # Calculate the gradients for generators and discriminators
-        d_gradients = disc_tape.gradient(d_loss, self.dz_net.trainable_variables)
-        
-        # Apply the gradients to the optimizer
-        self.d_pre_optimizer.apply_gradients(zip(d_gradients, self.dz_net.trainable_variables))
-        return dz_loss, d_loss
-    
-    @tf.function
-    def train_gen_step(self, data_z, data_v, data_x, data_y):
-        with tf.GradientTape(persistent=True) as gen_tape:
-            sigma_square_loss = 0
-            data_v_ = self.g_net(data_z)[:,:self.params['v_dim']]
-            sigma_square_loss += tf.reduce_mean(tf.square(self.g_net(data_z)[:,-1]))
-            data_z_ = self.e_net(data_v)
-            
-            data_z0 = data_z_[:,:self.params['z_dims'][0]]
-            data_z1 = data_z_[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
-            data_z2 = data_z_[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
-
-            data_z__= self.e_net(data_v_)
-            data_v__ = self.g_net(data_z_)[:,:self.params['v_dim']]
-            
-            data_dz_ = self.dz_net(data_z_)
-            
-            l2_loss_v = tf.reduce_mean((data_v - data_v__)**2)
-            l2_loss_z = tf.reduce_mean((data_z - data_z__)**2)
-            
-            e_loss_adv = -tf.reduce_mean(data_dz_)
-
-            data_y_ = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,:1]
-            sigma_square_loss += tf.reduce_mean(
-                tf.square(self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,-1]))
-            data_x_ = self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,:1]
-            sigma_square_loss += tf.reduce_mean(
-                tf.square(self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,-1]))
-
-            if self.params['binary_treatment']:
-                l2_loss_x = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=data_x, 
-                                                       logits=data_x_))
-            else:
-                l2_loss_x = tf.reduce_mean((data_x_ - data_x)**2)
-            l2_loss_y = tf.reduce_mean((data_y_ - data_y)**2)
-            g_e_loss = e_loss_adv+(l2_loss_v + self.params['use_z_rec']*l2_loss_z) \
-                        + (l2_loss_x+l2_loss_y) + 0.001 * sigma_square_loss
-
-        # Calculate the gradients for generators and discriminators
-        g_e_gradients = gen_tape.gradient(g_e_loss, self.g_net.trainable_variables+self.e_net.trainable_variables+\
-                                        self.f_net.trainable_variables+self.h_net.trainable_variables)
-        
-        # Apply the gradients to the optimizer
-        self.g_pre_optimizer.apply_gradients(zip(g_e_gradients, self.g_net.trainable_variables+self.e_net.trainable_variables+\
-                                            self.f_net.trainable_variables+self.h_net.trainable_variables))
-        return e_loss_adv, l2_loss_v, l2_loss_z, l2_loss_x, l2_loss_y, g_e_loss
-    
 
     def egm_init(self, data, n_iter=10000, batch_size=32, batches_per_eval=500, verbose=1):
         data_x, data_y, data_v = data
@@ -2077,7 +1683,10 @@ class CausalBGM_MCMC(object):
             return ite_pre, mse_x, mse_y, mse_v
         else:
             # Average dose response function (ADRF)
-            x_values = tf.linspace(self.params['x_min'], self.params['x_max'], nb_intervals)
+            # Compute 5% and 95% quantiles from data_x
+            x_min = tfp.stats.percentile(data_x, 5.0)
+            x_max = tfp.stats.percentile(data_x, 95.0)
+            x_values = tf.linspace(x_min, x_max, nb_intervals)
             
             def compute_dose_response(x):
                 data_x_tile = tf.fill([tf.shape(data_x)[0], 1], x)

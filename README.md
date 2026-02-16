@@ -5,13 +5,16 @@
 [![Documentation Status](https://readthedocs.org/projects/causalbgm/badge/?version=latest)](https://causalbgm.readthedocs.io)
 
 
-# bayesgm: A Versatile Bayesian Generative Modeling Framework
+# bayesgm: A toolkit for AI-driven Bayesian Generative Modeling
 
-**bayesgm** is a Python package providing a **unified Bayesian generative modeling (BGM) framework** for representation learning, uncertainty quantification, and downstream tasks such as **causal inference** in complex, high-dimensional data.
+**bayesgm** is a toolkit  providing a AI-driven Bayesian generative modeling framework for various Bayesian inference tasks in complex, high-dimensional data.
 
-The framework is built upon **Bayesian principles combined with modern deep generative models**, enabling flexible modeling of latent structures, complex dependencies, and principled uncertainty estimation.
+The framework is built upon Bayesian principles combined with modern AI models, enabling flexible modeling of complex dependencies with principled uncertainty estimation.
 
-**BGM** is the foundational component of `bayesgm`, designed for **general-purpose Bayesian generative modeling**. It also serves as the **modeling backbone** upon which task-specific extensions (e.g., causal inference, Bayesian inference) are built.
+Currently, the **bayesgm** package includes two model families:
+
+- **BGM**: Bayesian generative modeling for arbitrary conditional inference (foundational model).
+- **CausalBGM**: Bayesian generative modeling for causal effect estimation.
 
 ---
 
@@ -47,27 +50,26 @@ A detailed Python tutorial can be found at our [website](https://causalbgm.readt
 import yaml
 import numpy as np
 import bayesgm
-from bayesgm.models import BayesGM
+from bayesgm.models import BGM
 from bayesgm.utils import simulate_z_hetero
 from sklearn.model_selection import train_test_split
 
 params = yaml.safe_load(open('src/configs/Sim_heteroskedastic.yaml', 'r'))
 X, Y = simulate_z_hetero(n=20000, k=10, d=params['x_dim']-1)
 X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.1, random_state=123)
-data = np.c_[X_train, Y_train].astype('float32')
+data_train = np.c_[X_train, Y_train].astype('float32')
 
 # Instantiate a BGM model
-model = BayesGM(params=params, random_seed=None)
-
-# Perform Encoding Generative Modeling (EGM) initialization (optional but recommended)
-model.egm_init(data=data, n_iter=30000, batches_per_eval=5000, verbose=1)
+model = BGM(params=params, random_seed=None)
 
 # Train the BGM model with an iterative updating algorithm
-model.fit(data=data, epochs=500, epochs_per_eval=10, verbose=1)
+model.fit(data=data_train, epochs=200, epochs_per_eval=10, use_egm_init=True, egm_n_iter=50000, egm_batches_per_eval=500, verbose=1)
 
-# Provide both point estimate and posterior interval (uncertainty) using the trained BGM model
-ind_x1 = list(range(params['x_dim']-1))
-data_x_pred, pred_interval = model.predict(data=X_test,ind_x1=ind_x1,alpha=0.05,bs=100,seed=42)
+# Construct test data where the last column is np.nan (to be predicted/imputed)
+data_test = np.hstack([X_test, np.full((X_test.shape[0], 1), np.nan)])
+
+# Predict the imputed data with prediction intervals
+data_x_pred, pred_interval = model.predict(data=data_test, alpha=0.05, n_mcmc=5000, burn_in=5000, seed=42)
 ```
 ---
 
@@ -108,11 +110,8 @@ x, y, v = Sim_Hirano_Imbens_sampler(N=20000, v_dim=200).load_all()
 # Instantiate a CausalBGM model
 model = CausalBGM(params=params, random_seed=None)
 
-# Perform Encoding Generative Modeling (EGM) initialization (optional but recommended)
-model.egm_init(data=(x, y, v), n_iter=30000, batches_per_eval=500, verbose=1)
-
 # Train the CausalBGM model with an iterative updating algorithm
-model.fit(data=(x, y, v), epochs=100, epochs_per_eval=10, verbose=1)
+model.fit(data=(x,y,v), epochs=100, epochs_per_eval=10, use_egm_init=True, egm_n_iter=30000, egm_batches_per_eval=500, verbose=1)
 
 # Provide both point estimate and posterior interval (uncertainty) using the trained CausalBGM model
 causal_pre, pos_intervals = model.predict(
