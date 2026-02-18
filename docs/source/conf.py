@@ -35,6 +35,16 @@ napoleon_numpy_docstring = True
 napoleon_use_param = True
 nbsphinx_execute = "never"
 
+# On RTD we don't need TensorFlow execution; mock heavyweight modules to keep
+# autodoc importable and stable.
+if os.environ.get("READTHEDOCS") == "True":
+    autodoc_mock_imports = [
+        "tensorflow",
+        "tensorflow_probability",
+        "keras",
+        "bayesgm.models.networks",
+    ]
+
 # -- Intersphinx mapping for external libraries ----------------------------
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),

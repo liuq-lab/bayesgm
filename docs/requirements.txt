@@ -4,3 +4,8 @@ sphinx_rtd_theme
 nbsphinx
 recommonmark
 sphinx_markdown_tables
+numpy
+pandas
+scikit-learn
+python-dateutil
+tqdm
