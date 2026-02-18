@@ -12,10 +12,6 @@ BGM
 .. autoclass:: BGM
    :no-undoc-members:
 
-   .. rubric:: Constructor
-
-   .. automethod:: __init__
-
    .. rubric:: Training
 
    .. automethod:: fit
@@ -35,10 +31,6 @@ MNISTBGM
 
 .. autoclass:: MNISTBGM
    :no-undoc-members:
-
-   .. rubric:: Constructor
-
-   .. automethod:: __init__
 
    .. rubric:: Training
 
@@ -66,10 +58,6 @@ CausalBGM
 .. autoclass:: CausalBGM
    :no-undoc-members:
 
-   .. rubric:: Constructor
-
-   .. automethod:: __init__
-
    .. rubric:: Training
 
    .. automethod:: fit
@@ -88,10 +76,6 @@ IdentifiableCausalBGM
 
 .. autoclass:: IdentifiableCausalBGM
    :no-undoc-members:
-
-   .. rubric:: Constructor
-
-   .. automethod:: __init__
 
    .. rubric:: Training
 
@@ -112,13 +96,10 @@ FullMCMCCausalBGM
 .. autoclass:: FullMCMCCausalBGM
    :no-undoc-members:
 
-   .. rubric:: Constructor
-
-   .. automethod:: __init__
-
    .. rubric:: Training
 
    .. automethod:: fit
+   .. automethod:: run_mcmc_training
 
    .. rubric:: Inference
 

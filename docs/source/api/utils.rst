@@ -26,3 +26,5 @@ Data I/O
 
 .. autofunction:: parse_file
 
+.. autofunction:: parse_file_triplet
+

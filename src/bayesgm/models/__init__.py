@@ -2,5 +2,4 @@ from .networks import BaseFullyConnectedNet, BaseVariationalNet, BayesianFullyCo
 from .causalbgm import CausalBGM, IdentifiableCausalBGM, FullMCMCCausalBGM
 from .bgm import BGM, MNISTBGM
 
-
 __all__ = ["CausalBGM", "IdentifiableCausalBGM", "FullMCMCCausalBGM", "BGM", "MNISTBGM"]

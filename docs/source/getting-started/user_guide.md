@@ -8,21 +8,21 @@ The figure below illustrates the versatility of `bayesgm`, spanning dimensional 
 
 ## Which model should I use?
 
-Use **BGM** if your goal is:
+Use **BGM** family if your goal is:
 
-- conditional prediction/generation,
-- missing-data imputation,
-- train-once infer-under-different-conditioning workflows.
+- conditional prediction/generation
+- missing-data imputation
+- dimension reduction
 
-Use **CausalBGM** if your goal is:
+Use **CausalBGM** family if your goal is:
 
-- counterfactual estimation,
-- treatment-effect estimation,
-- causal inference with uncertainty quantification.
+- counterfactual prediction
+- ATE estimation
+- ITE estimation
 
 ## Package overview
 
-Both models are installed from the same Python package:
+All models are installed from the same `bayesgm` package:
 
 ```bash
 pip install bayesgm

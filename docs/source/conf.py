@@ -19,6 +19,7 @@ master_doc = "index"
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.autosummary",
+    "sphinx.ext.intersphinx",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx_autodoc_typehints",
@@ -31,7 +32,37 @@ autosummary_generate = True
 autodoc_member_order = "bysource"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True
+napoleon_use_param = True
 nbsphinx_execute = "never"
+
+# -- Intersphinx mapping for external libraries ----------------------------
+intersphinx_mapping = {
+    "python": ("https://docs.python.org/3", None),
+    "numpy": ("https://numpy.org/doc/stable/", None),
+    "tensorflow": ("https://www.tensorflow.org/api_docs/python", "https://github.com/GPflow/tensorflow-intersphinx/raw/master/tf2_py_objects.inv"),
+}
+
+# -- Suppress false cross-reference warnings from NumPy-style docstrings ---
+nitpicky = False
+nitpick_ignore = [
+    ("py:class", "optional"),
+    ("py:class", "array-like"),
+]
+nitpick_ignore_regex = [
+    # "default=..." values parsed out of type fields
+    (r"py:class", r"default=.*"),
+    # NumPy / TensorFlow shorthand type names
+    (r"py:class", r"np\.ndarray"),
+    (r"py:class", r"tf\.Tensor"),
+    # Miscellaneous type fragments from docstrings
+    (r"py:class", r"optional"),
+    (r"py:class", r"floats"),
+    # Tuple-unpacking labels in shape descriptions, e.g. (H, W)
+    (r"py:class", r"H"),
+    (r"py:class", r"W"),
+    (r"py:class", r"row"),
+    (r"py:class", r"col"),
+]
 
 templates_path = ["_templates"]
 exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
