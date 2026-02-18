@@ -4,11 +4,11 @@ setuptools.setup(
     name="bayesgm", 
     version="1.0.0",
     author="Qiao Liu",
-    author_email="liuqiao@stanford.edu",
-    description="An AI-powered Bayesian generative modeling approach",
-    long_description="Causal inference in observational studies with high-dimensional covariates presents significant challenges. We introduce CausalBGM, an AI-powered Bayesian generative modeling approach that captures the causal relationship among covariates, treatment, and outcome variables. The core innovation of CausalBGM lies in its ability to estimate the individual treatment effect (ITE) by learning individual-specific distributions of a low-dimensional latent feature set (e.g., latent confounders) that drives changes in both treatment and outcome. This approach not only effectively mitigates confounding effects but also provides comprehensive uncertainty quantification, offering reliable and interpretable causal effect estimates at the individual level. CausalBGM adopts a Bayesian model and uses a novel iterative algorithm to update the model parameters and the posterior distribution of latent features until convergence. This framework leverages the power of AI to capture complex dependencies among variables while adhering to the Bayesian principles. Extensive experiments demonstrate that CausalBGM consistently outperforms state-of-the-art methods, particularly in scenarios with high-dimensional covariates and large-scale datasets. Its Bayesian foundation ensures statistical rigor, providing robust and well-calibrated posterior intervals. By addressing key limitations of existing methods, CausalBGM emerges as a robust and promising framework for advancing causal inference in modern applications in fields such as genomics, healthcare, and social sciences.",
+    author_email="qiao.liu@yale.edu",
+    description="A toolkit for AI-driven Bayesian Generative Modeling",
+    long_description="bayesgm is a toolkit providing a AI-driven Bayesian generative modeling framework for various Bayesian inference tasks in complex, high-dimensional data. The framework is built upon Bayesian principles combined with modern AI models, enabling flexible modeling of complex dependencies with principled uncertainty estimation. Currently, the bayesgm package includes two model families: BGM and CausalBGM.",
     long_description_content_type="text/markdown",
-    url="https://github.com/SUwonglab/CausalBGM",
+    url="https://github.com/liuq-lab/bayesgm",
     packages=setuptools.find_packages(),
     install_requires=[
    'numpy==1.24.2',
@@ -20,9 +20,9 @@ setuptools.setup(
    'tqdm',
    'python-dateutil'
     ],
+    license="MIT",
     classifiers=[
         "Programming Language :: Python :: 3",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
     python_requires='>=3.7, <3.11',

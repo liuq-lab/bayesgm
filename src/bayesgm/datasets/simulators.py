@@ -3,6 +3,37 @@ from sklearn.datasets import make_low_rank_matrix
 
 
 def simulate_regression(n_samples, n_features, n_targets, effective_rank=None, variance=None, random_state=123):
+    """Simulate a linear regression dataset with optional low-rank design.
+
+    Generates :math:`X` (optionally low-rank) and
+    :math:`Y = X_{\\text{aug}} \\beta + \\varepsilon` where
+    :math:`X_{\\text{aug}}` includes an intercept column.
+
+    Parameters
+    ----------
+    n_samples : int
+        Number of samples.
+    n_features : int
+        Number of features (columns of :math:`X`).
+    n_targets : int
+        Number of target (response) variables.
+    effective_rank : int or None, optional
+        If provided, the design matrix :math:`X` is generated as a low-rank
+        matrix with this effective rank.  Otherwise :math:`X` is i.i.d.
+        standard normal.
+    variance : np.ndarray or None, optional
+        Per-sample noise variance.  If ``None``, defaults to
+        ``0.01 * mean(X^2)`` per sample.
+    random_state : int, default=123
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    X : np.ndarray
+        Feature matrix with shape ``(n_samples, n_features)``.
+    Y : np.ndarray
+        Response matrix with shape ``(n_samples, n_targets)``.
+    """
     np.random.seed(random_state)
     if effective_rank is None:
         X = np.random.normal(size=(n_samples, n_features))
@@ -90,6 +121,30 @@ def simulate_low_rank_data(n_samples=10000, z_dim=2, x_dim=4, rank=2, sigma_z=Fa
     return X, Z
 
 def simulate_heteroskedastic_data(n=1000, d=5, seed=42):
+    """Simulate a heteroskedastic regression dataset.
+
+    The noise standard deviation depends on the second feature :math:`X_2`:
+    ``sigma = 0.5 + 0.5 * sin(2 * pi * X_2)`` (clipped to [0.1, 2.0]
+    outside :math:`|X_2| > 2`).
+
+    Parameters
+    ----------
+    n : int, default=1000
+        Number of samples.
+    d : int, default=5
+        Number of features.
+    seed : int, default=42
+        Random seed.
+
+    Returns
+    -------
+    X : np.ndarray
+        Feature matrix with shape ``(n, d)``.
+    Y : np.ndarray
+        Response vector with shape ``(n,)``.
+    sigma : np.ndarray
+        True noise standard deviation with shape ``(n,)``.
+    """
     np.random.seed(seed)
     X = np.random.randn(n, d)
     X1 = X[:, 0]
@@ -106,6 +161,30 @@ def simulate_heteroskedastic_data(n=1000, d=5, seed=42):
     return X, Y, sigma
 
 def simulate_z_hetero(n=20000, k=3, d=20-1, seed=42):
+    """Simulate a latent-factor heteroskedastic regression dataset.
+
+    Observed features :math:`X` are a noisy low-rank projection of a
+    :math:`k`-dimensional latent variable :math:`Z`.  The response
+    :math:`Y` depends nonlinearly on :math:`Z` with heteroskedastic noise.
+
+    Parameters
+    ----------
+    n : int, default=20000
+        Number of samples.
+    k : int, default=3
+        Dimension of the latent variable :math:`Z`.
+    d : int, default=19
+        Number of observed features.
+    seed : int, default=42
+        Random seed.
+
+    Returns
+    -------
+    X : np.ndarray
+        Observed feature matrix with shape ``(n, d)``.
+    Y : np.ndarray
+        Response vector with shape ``(n,)``.
+    """
     np.random.seed(seed)
 
     Z = np.random.randn(n, k)

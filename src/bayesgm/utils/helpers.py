@@ -178,7 +178,35 @@ def get_SDR_dim(X, y, n_slices = 10, ratio = 0.8):
     n_directions = threshold_index + 1
     return n_directions
 
-def estimate_latent_dims(x,y,v, v_ratio = 0.7, z0_dim=3, max_total_dim=64, min_z3_dim = 3):
+def estimate_latent_dims(x, y, v, v_ratio=0.7, z0_dim=3, max_total_dim=64, min_z3_dim=3):
+    """Estimate the latent-dimension split for CausalBGM.
+
+    Uses Sliced Inverse Regression (SIR) and PCA to automatically choose
+    dimensions ``[z0, z1, z2, z3]`` for the four latent sub-vectors.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        Treatment variable with shape ``(n, 1)``.
+    y : np.ndarray
+        Outcome variable with shape ``(n, 1)``.
+    v : np.ndarray
+        Covariates with shape ``(n, v_dim)``.
+    v_ratio : float, default=0.7
+        Cumulative PCA variance ratio used to determine total latent
+        dimension.
+    z0_dim : int, default=3
+        Fixed dimension for the confounding sub-vector :math:`Z_0`.
+    max_total_dim : int, default=64
+        Upper bound on the total latent dimension.
+    min_z3_dim : int, default=3
+        Minimum dimension for the residual sub-vector :math:`Z_3`.
+
+    Returns
+    -------
+    list of int
+        A list ``[z0_dim, z1_dim, z2_dim, z3_dim]``.
+    """
     v = StandardScaler().fit_transform(v)
     y = StandardScaler().fit_transform(y)
     z1_dim = get_SDR_dim(v, y, n_slices=10, ratio=0.8)
