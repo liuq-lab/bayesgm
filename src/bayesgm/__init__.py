@@ -1,15 +1,50 @@
-__version__ = '0.3.0'
+from importlib import import_module
+from typing import TYPE_CHECKING
 
-from .models.causalbgm import CausalBGM, IdentifiableCausalBGM, FullMCMCCausalBGM
-from .datasets import Base_sampler, Sim_Hirano_Imbens_sampler, Sim_Sun_sampler, Sim_Colangelo_sampler, Semi_Twins_sampler, Semi_acic_sampler
+__version__ = "1.0.0"
+
+if TYPE_CHECKING:
+    from .datasets import (
+        Base_sampler,
+        Semi_Twins_sampler,
+        Semi_acic_sampler,
+        Sim_Colangelo_sampler,
+        Sim_Hirano_Imbens_sampler,
+        Sim_Sun_sampler,
+    )
+    from .models.causalbgm import CausalBGM, FullMCMCCausalBGM, IdentifiableCausalBGM
+
+_SYMBOL_TO_MODULE = {
+    "CausalBGM": "bayesgm.models.causalbgm",
+    "IdentifiableCausalBGM": "bayesgm.models.causalbgm",
+    "FullMCMCCausalBGM": "bayesgm.models.causalbgm",
+    "Base_sampler": "bayesgm.datasets",
+    "Sim_Hirano_Imbens_sampler": "bayesgm.datasets",
+    "Sim_Sun_sampler": "bayesgm.datasets",
+    "Sim_Colangelo_sampler": "bayesgm.datasets",
+    "Semi_Twins_sampler": "bayesgm.datasets",
+    "Semi_acic_sampler": "bayesgm.datasets",
+}
 
 __all__ = [
     "CausalBGM",
     "IdentifiableCausalBGM",
     "FullMCMCCausalBGM",
+    "Base_sampler",
     "Sim_Hirano_Imbens_sampler",
     "Sim_Sun_sampler",
     "Sim_Colangelo_sampler",
     "Semi_Twins_sampler",
-    "Semi_acic_sampler"
+    "Semi_acic_sampler",
 ]
+
+
+def __getattr__(name):
+    if name in _SYMBOL_TO_MODULE:
+        module = import_module(_SYMBOL_TO_MODULE[name])
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__():
+    return sorted(set(globals()) | set(__all__))
