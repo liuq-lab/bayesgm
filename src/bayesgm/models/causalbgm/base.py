@@ -244,9 +244,10 @@ class CausalBGM(object):
     
     # Update posterior of latent variables Z
     @tf.function
-    def update_latent_variable_sgd(self, data_x, data_y, data_v, data_z, eps=1e-6):
+    def update_latent_variable_sgd(self, data_x, data_y, data_v, batch_idx, eps=1e-6):
         with tf.GradientTape() as tape:
-            
+
+            data_z = tf.gather(self.data_z, batch_idx, axis=0)
             data_z0 = data_z[:,:self.params['z_dims'][0]]
             data_z1 = data_z[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
             data_z2 = data_z[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
@@ -295,9 +296,9 @@ class CausalBGM(object):
             #loss_postrior_z = loss_postrior_z/self.params['v_dim']
 
         # Calculate the gradients
-        posterior_gradients = tape.gradient(loss_postrior_z, [data_z])
+        posterior_gradients = tape.gradient(loss_postrior_z, [self.data_z])
         # Apply the gradients to the optimizer
-        self.posterior_optimizer.apply_gradients(zip(posterior_gradients, [data_z]))
+        self.posterior_optimizer.apply_gradients(zip(posterior_gradients, [self.data_z]))
         return loss_postrior_z
     
 #################################### EGM initialization ###########################################
@@ -376,18 +377,18 @@ class CausalBGM(object):
         return e_loss_adv, l2_loss_v, l2_loss_z, l2_loss_x, l2_loss_y, g_e_loss
     
 
-    def egm_init(self, data, egm_n_iter=10000, batch_size=32, egm_batches_per_eval=500, verbose=1):
-        """Run Encoding Generative Modeling (EGM) initialization.
+    def egm_init(self, data, egm_n_iter=30000, batch_size=32, egm_batches_per_eval=500, verbose=1):
+        """Run the EGM warm-start used by :meth:`fit`.
 
-        Initializes network parameters by jointly fitting the generator,
-        encoder, and discriminator before the main iterative optimization.
-        This is optional and can be skipped by setting `use_egm_init` to False in :meth:`fit`.
+        This helper performs the Encoding Generative Modeling (EGM)
+        initialization. In the current workflow it is typically called from :meth:`fit` when
+        ``use_egm_init=True``.
 
         Parameters
         ----------
         data : tuple of np.ndarray
             A triplet ``(data_x, data_y, data_v)``.
-        egm_n_iter : int, default=10000
+        egm_n_iter : int, default=30000
             Number of EGM mini-batch iterations.
         batch_size : int, default=32
             Mini-batch size.
@@ -423,53 +424,46 @@ class CausalBGM(object):
                 )
                 if verbose:
                     print(loss_contents)
+                causal_pre, mse_x, mse_y, mse_v = self.evaluate(data = data)
+                causal_pre = causal_pre.numpy()
                 if self.params['save_res']:
-                    causal_pre, mse_x, mse_y, mse_v, data_x_pred, data_y_pred, data_v_pred = self.evaluate(data = data)
-                    causal_pre = causal_pre.numpy()
                     save_data('{}/causal_pre_egm_init_iter-{}.txt'.format(self.save_dir, batch_iter), causal_pre)
         print('EGM Initialization Ends.')
 #################################### EGM initialization #############################################
 
-    def fit(self, data,
-            batch_size=32, epochs=100, epochs_per_eval=5, startoff=0,
-            use_egm_init=True, egm_n_iter=30000, egm_batches_per_eval=500, save_format='txt', verbose=1):
-        """Train the CausalBGM model on observed data.
+    def fit(self, data, epochs=100, epochs_per_eval=5, batch_size=32, startoff=0, use_egm_init=True, 
+            egm_n_iter=30000, egm_batches_per_eval=500, save_format='txt', verbose=1):
+        """Train CausalBGM with an optional EGM warm-start.
 
-        The training procedure consists of two phases:
-
-        1. **EGM initialization** (optional) — warm-start by jointly training encoder and
-           generator with adversarial losses to obtain a good starting point
-           for the latent variables and model parameters. This phase is optional and can be skipped by setting `use_egm_init` to False.
-        2. **Iterative optimization** — alternates between updating the
-           generator network parameters :math:`\\theta` and the per-sample
-           latent variables :math:`Z` via SGD.
-           
         Parameters
         ----------
         data : tuple of np.ndarray
-            A triplet ``(data_x, data_y, data_v)`` where
-
-            - ``data_x`` has shape ``(n, 1)`` — treatment variable.
-            - ``data_y`` has shape ``(n, 1)`` — outcome variable.
-            - ``data_v`` has shape ``(n, v_dim)`` — covariates.
-        batch_size : int, default=32
-            Mini-batch size.
+            Training data ``(data_x, data_y, data_v)``.
         epochs : int, default=100
-            Number of training epochs for the iterative phase.
+            Number of training epochs.
         epochs_per_eval : int, default=5
-            Evaluate and (optionally) save every this many epochs.
+            Evaluate the full training set every this many epochs.
+        batch_size : int, default=32
+            Mini-batch size used for both EGM initialization and iterative
+            updates.
         startoff : int, default=0
-            Only start tracking the best model after this many epochs.
+            Start tracking the best model only after this epoch.
         use_egm_init : bool, default=True
-            Whether to run EGM initialization before iterative training.
+            If ``True``, run EGM initialization before iterative training.
         egm_n_iter : int, default=30000
-            Number of EGM initialization iterations.
+            Number of EGM mini-batch iterations when ``use_egm_init=True``.
         egm_batches_per_eval : int, default=500
-            Evaluate EGM every this many iterations.
+            Logging interval for EGM initialization.
         save_format : str, default='txt'
-            File format for saving causal estimates (``'txt'`` or ``'npy'``).
+            File format used when saving causal estimates.
         verbose : int, default=1
-            Verbosity level.
+            Verbosity level. Set to ``0`` to suppress progress logging.
+
+        Notes
+        -----
+        After the optional EGM warm-start, latent variables are initialized
+        from ``e(V)``. If EGM is skipped, they are initialized from a standard
+        normal distribution.
         """
         
         data_x, data_y, data_v = data
@@ -495,11 +489,11 @@ class CausalBGM(object):
             sample_idx = np.random.choice(len(data_x), len(data_x), replace=False)
             
             # Create a progress bar for batches
-            with tqdm(total=len(data_x) // batch_size, desc=f"Epoch {epoch}/{epochs}", unit="batch") as batch_bar:
-                for i in range(0,len(data_x) - batch_size + 1,batch_size): ## Skip the incomplete last batch
+            with tqdm(total=int(np.ceil(len(data_x) / batch_size)), desc=f"Epoch {epoch}/{epochs}", unit="batch") as batch_bar:
+                for i in range(0, len(data_x), batch_size):
                     batch_idx = sample_idx[i:i+batch_size]
                     # Update model parameters of G, H, F with SGD
-                    batch_z = tf.Variable(tf.gather(self.data_z, batch_idx, axis = 0), name='batch_z', trainable=True)
+                    batch_z = tf.gather(self.data_z, batch_idx, axis = 0)
                     batch_x = data_x[batch_idx,:]
                     batch_y = data_y[batch_idx,:]
                     batch_v = data_v[batch_idx,:]
@@ -508,13 +502,7 @@ class CausalBGM(object):
                     loss_y, loss_mse_y = self.update_f_net(batch_z, batch_x, batch_y)
 
                     # Update Z by maximizing a posterior or posterior mean
-                    loss_postrior_z = self.update_latent_variable_sgd(batch_x, batch_y, batch_v, batch_z)
-
-                    # Update data_z with updated batch_z
-                    self.data_z.scatter_nd_update(
-                        indices=tf.expand_dims(batch_idx, axis=1),
-                        updates=batch_z                             
-                    )
+                    loss_postrior_z = self.update_latent_variable_sgd(batch_x, batch_y, batch_v, batch_idx)
                     
                     # Update the progress bar with the current loss information
                     loss_contents = (
@@ -527,9 +515,9 @@ class CausalBGM(object):
             
             # Evaluate the full training data and print metrics for the epoch
             if epoch % epochs_per_eval == 0:
-                causal_pre, mse_x, mse_y, mse_v, data_x_pred, data_y_pred, data_v_pred = self.evaluate(data = data, data_z = self.data_z)
+                causal_pre, mse_x, mse_y, mse_v = self.evaluate(data = data, data_z = self.data_z)
                 causal_pre = causal_pre.numpy()
-                
+
                 if verbose:
                     print('Epoch [%d/%d]: MSE_x: %.4f, MSE_y: %.4f, MSE_v: %.4f\n' % (epoch, epochs, mse_x, mse_y, mse_v))
 
@@ -545,40 +533,6 @@ class CausalBGM(object):
 
     @tf.function
     def evaluate(self, data, data_z=None, nb_intervals=200):
-        """Evaluate the model on observed data and compute causal estimates.
-
-        For **binary treatment**, the Individual Treatment Effect (ITE) is
-        returned.  For **continuous treatment**, the Average Dose-Response
-        Function (ADRF) is computed over a grid of treatment values.
-
-        Parameters
-        ----------
-        data : tuple of np.ndarray
-            A triplet ``(data_x, data_y, data_v)``.
-        data_z : tf.Tensor or None, optional
-            Latent variables.  If ``None``, inferred via the encoder.
-        nb_intervals : int, default=200
-            Number of grid points for the dose-response curve
-            (continuous treatment only).
-
-        Returns
-        -------
-        causal_estimate : tf.Tensor
-            ITE with shape ``(n, 1)`` (binary) or ADRF with shape
-            ``(nb_intervals,)`` (continuous).
-        mse_x : tf.Tensor
-            MSE for the treatment model.
-        mse_y : tf.Tensor
-            MSE for the outcome model.
-        mse_v : tf.Tensor
-            MSE for the covariate model.
-        data_x_pred : tf.Tensor
-            Predicted treatment values.
-        data_y_pred : tf.Tensor
-            Predicted outcome values.
-        data_v_pred : tf.Tensor
-            Predicted covariates.
-        """
         data_x, data_y, data_v = data
         if data_z is None:
             data_z = self.e_net(data_v)
@@ -593,16 +547,14 @@ class CausalBGM(object):
         mse_v = tf.reduce_mean((data_v-data_v_pred)**2)
         mse_x = tf.reduce_mean((data_x-data_x_pred)**2)
         mse_y = tf.reduce_mean((data_y-data_y_pred)**2)
-        
         if self.params['binary_treatment']:
             # Individual treatment effect (ITE) && average treatment effect (ATE)
             y_pred_pos = self.f_net(tf.concat([data_z0, data_z1, np.ones((len(data_x),1))], axis=-1))[:,:1]
             y_pred_neg = self.f_net(tf.concat([data_z0, data_z1, np.zeros((len(data_x),1))], axis=-1))[:,:1]
             ite_pre = y_pred_pos-y_pred_neg
-            return ite_pre, mse_x, mse_y, mse_v, data_x_pred, data_y_pred, data_v_pred
+            return ite_pre, mse_x, mse_y, mse_v
         else:
             # Average dose response function (ADRF)
-            # Compute 5% and 95% quantiles from data_x
             x_min = tfp.stats.percentile(data_x, 5.0)
             x_max = tfp.stats.percentile(data_x, 95.0)
             x_values = tf.linspace(x_min, x_max, nb_intervals)
@@ -615,83 +567,103 @@ class CausalBGM(object):
         
             dose_response = tf.map_fn(compute_dose_response, x_values, fn_output_signature=tf.float32)
             
-            return dose_response, mse_x, mse_y, mse_v, data_x_pred, data_y_pred, data_v_pred
+            return dose_response, mse_x, mse_y, mse_v
 
     # Predict with MCMC sampling
-    def predict(self, data, alpha=0.01, n_mcmc=3000, x_values=None, q_sd=1.0, sample_y=True, bs=3000):
-        """
-        Evaluate the model on the test data and provide both point estimates and posterior intervals for causal effects.
-        - For binary treatment, the Individual Treatment Effect (ITE) is estimated.
-        - For continuous treatment, the Average Dose Response Function (ADRF) is estimated.
+    def predict(self, data, alpha=0.01, n_mcmc=3000, burn_in=5000, x_values=None, q_sd=1.0, sample_y=True, bs=100):
+        """Estimate causal effects with posterior intervals from latent MCMC samples.
 
         Parameters
         ----------
-        data : list
-            Input data containing [data_x, data_y, data_v].
+        data : tuple of np.ndarray
+            Test data ``(data_x, data_y, data_v)``.
         alpha : float, default=0.01
-            Significance level for the posterior interval.
+            Significance level used for posterior intervals.
         n_mcmc : int, default=3000
-            Number of posterior MCMC samples to draw.
-        x_values : list of floats or np.ndarray
-            Treatment values for dose-response prediction.
-            Required for continuous treatment.
+            Number of retained MCMC samples.
+        burn_in : int, default=5000
+            Number of burn-in iterations for the Metropolis-Hastings sampler.
+        x_values : float or array-like, optional
+            Treatment values used to evaluate the dose-response curve for
+            continuous-treatment settings.
         q_sd : float, default=1.0
-            Proposal standard deviation used by the Metropolis-Hastings sampler.
+            Proposal standard deviation for the Metropolis-Hastings sampler.
         sample_y : bool, default=True
-            Whether to sample from the outcome variance model.
-        bs : int, default=3000
-            Batch size for processing posterior samples.
+            If ``True``, sample from the outcome model using the variance head.
+            If ``False``, use the posterior mean of the outcome model.
+        bs : int, default=100
+            Number of test subjects processed per MCMC batch.
 
         Returns
         -------
         effect : np.ndarray
-            Binary treatment: point estimate of ITE with shape ``(n,)``.
-            Continuous treatment: ADRF estimate with shape ``(len(x_values),)``.
+            Binary treatment: ITE estimates with shape ``(n,)``.
+            Continuous treatment: ADRF estimates with shape ``(len(x_values),)``.
         pos_int : np.ndarray
-            Posterior interval with shape ``(n, 2)`` for ITE, or
-            ``(len(x_values), 2)`` for ADRF.
+            Posterior intervals with shape ``(n, 2)`` for binary treatment or
+            ``(len(x_values), 2)`` for continuous treatment.
         """
         assert 0 < alpha < 1, "The significance level 'alpha' must be greater than 0 and less than 1."
 
         if not self.params['binary_treatment']:
-            # Validate x_values for binary treatment
+            # Continuous treatment requires an evaluation grid.
             if x_values is None:
-                raise ValueError("For continous treatment, 'x_values' must not be None. Provide a list or a single treatment value.")
+                raise ValueError("For continuous treatment, 'x_values' must not be None. Provide a list or a single treatment value.")
 
         if x_values is not None:
             if np.isscalar(x_values):
-                # Convert scalar to 1D array
                 x_values = np.array([x_values], dtype=float) 
             else:
-                # Convert list to NumPy array
                 x_values = np.array(x_values, dtype=float)
 
-        # Initialize list to store causal effect samples
-        causal_effects = []
-        
+        data_x, data_y, data_v = data
+        n_test = len(data_x)
+        bs = max(1, int(bs))
+
         print('MCMC Latent Variable Sampling ...')
-        for i in range(0, data[0].shape[0], bs):
-            batch_data = (data[0][i:i + bs], data[1][i:i + bs], data[2][i:i + bs])
-            batch_posterior_z = self.metropolis_hastings_sampler(batch_data , n_keep=n_mcmc, q_sd=q_sd)
-            causal_effect_batch = self.infer_from_latent_posterior(batch_posterior_z, x_values=x_values, sample_y=sample_y).numpy()
-            causal_effects.append(causal_effect_batch)
-        causal_effects = np.concatenate(causal_effects, axis=-1)
-        
-        # Estimate the posterior interval with user-specific significance level alpha
 
         if self.params['binary_treatment']:
-            # For binary treatment: Individual Treatment Effect (ITE), causal effect has shape (n_mcmc, n)
-            ITE = np.mean(causal_effects, axis=0)
-            posterior_interval_upper = np.quantile(causal_effects, 1-alpha/2, axis=0)
-            posterior_interval_lower = np.quantile(causal_effects, alpha/2, axis=0)
+            ite_mean = np.zeros(n_test, dtype=np.float32)
+            posterior_interval_upper = np.zeros(n_test, dtype=np.float32)
+            posterior_interval_lower = np.zeros(n_test, dtype=np.float32)
+
+            for start in range(0, n_test, bs):
+                end = min(start + bs, n_test)
+                batch_data = (data_x[start:end], data_y[start:end], data_v[start:end])
+                batch_posterior_z = self.metropolis_hastings_sampler(
+                    batch_data, burn_in=burn_in, n_keep=n_mcmc, q_sd=q_sd
+                )
+                causal_effects = self.infer_from_latent_posterior(
+                    batch_posterior_z, x_values=x_values, sample_y=sample_y
+                ).numpy()
+
+                ite_mean[start:end] = np.mean(causal_effects, axis=0)
+                posterior_interval_upper[start:end] = np.quantile(causal_effects, 1 - alpha / 2, axis=0)
+                posterior_interval_lower[start:end] = np.quantile(causal_effects, alpha / 2, axis=0)
+
             pos_int = np.stack([posterior_interval_lower, posterior_interval_upper], axis=1)
-            return ITE, pos_int
+            return ite_mean, pos_int
         else:
-            # For continuous treatment: Average Dose Response Function (ADRF), causal effect has shape (len(x_values), n_mcmc, n)
-            causal_effects = np.mean(causal_effects, axis=-1)
+            adrf_draw_sums = np.zeros((len(x_values), n_mcmc), dtype=np.float32)
+            n_seen = 0
+
+            for start in range(0, n_test, bs):
+                end = min(start + bs, n_test)
+                batch_data = (data_x[start:end], data_y[start:end], data_v[start:end])
+                batch_posterior_z = self.metropolis_hastings_sampler(
+                    batch_data, burn_in=burn_in, n_keep=n_mcmc, q_sd=q_sd
+                )
+                batch_effects = self.infer_from_latent_posterior(
+                    batch_posterior_z, x_values=x_values, sample_y=sample_y
+                ).numpy()
+                batch_n = end - start
+                adrf_draw_sums += batch_effects * batch_n
+                n_seen += batch_n
+
+            causal_effects = adrf_draw_sums / float(n_seen)
             ADRF = np.mean(causal_effects, axis=1)
-            posterior_interval_upper = np.quantile(causal_effects, 1-alpha/2, axis=1)
-            posterior_interval_lower = np.quantile(causal_effects, alpha/2, axis=1)
+            posterior_interval_upper = np.quantile(causal_effects, 1 - alpha / 2, axis=1)
+            posterior_interval_lower = np.quantile(causal_effects, alpha / 2, axis=1)
             pos_int = np.stack([posterior_interval_lower, posterior_interval_upper], axis=1)
             return ADRF, pos_int
 
@@ -704,7 +676,7 @@ class CausalBGM(object):
         sample_y: (bool): consider the variance function in outcome generative model.
         return (np.ndarray): 
             ITE with shape (n_samples, n) containing all the MCMC samples.
-            ADRF with shape (len(x_values), n_samples, n) containing all the MCMC samples for each treatment value.
+            ADRF with shape (len(x_values), n_samples) containing all the MCMC samples for each treatment value.
         """
 
         # Extract the components of Z for X,Y
@@ -784,7 +756,7 @@ class CausalBGM(object):
                 else:
                     y_pred_all = mu_y_all
                     
-                return y_pred_all
+                return tf.reduce_mean(y_pred_all, axis=1)
             
             dose_response = tf.map_fn(compute_dose_response, x_values, fn_output_signature=tf.float32)
             
@@ -804,23 +776,26 @@ class CausalBGM(object):
         data_z1 = data_z[:,self.params['z_dims'][0]:sum(self.params['z_dims'][:2])]
         data_z2 = data_z[:,sum(self.params['z_dims'][:2]):sum(self.params['z_dims'][:3])]
 
-        mu_v = self.g_net(data_z)[:,:self.params['v_dim']]
+        g_net_output = self.g_net(data_z)
+        mu_v = g_net_output[:,:self.params['v_dim']]
         if 'sigma_v' in self.params:
             sigma_square_v = self.params['sigma_v']**2
         else:
-            sigma_square_v = tf.nn.softplus(self.g_net(data_z)[:,-1]) + eps
+            sigma_square_v = tf.nn.softplus(g_net_output[:,-1]) + eps
 
-        mu_x = self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,:1]
+        h_net_output = self.h_net(tf.concat([data_z0, data_z2], axis=-1))
+        mu_x = h_net_output[:,:1]
         if 'sigma_x' in self.params:
             sigma_square_x = self.params['sigma_x']**2
         else:
-            sigma_square_x = tf.nn.softplus(self.h_net(tf.concat([data_z0, data_z2], axis=-1))[:,-1]) + eps
+            sigma_square_x = tf.nn.softplus(h_net_output[:,-1]) + eps
 
-        mu_y = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,:1]
+        f_net_output = self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))
+        mu_y = f_net_output[:,:1]
         if 'sigma_y' in self.params:
             sigma_square_y = self.params['sigma_y']**2
         else:
-            sigma_square_y = tf.nn.softplus(self.f_net(tf.concat([data_z0, data_z1, data_x], axis=-1))[:,-1]) + eps
+            sigma_square_y = tf.nn.softplus(f_net_output[:,-1]) + eps
 
         loss_pv_z = tf.reduce_sum((data_v - mu_v)**2, axis=1)/(2*sigma_square_v) + \
                 self.params['v_dim'] * tf.math.log(sigma_square_v)/2

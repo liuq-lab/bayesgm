@@ -13,26 +13,18 @@ class BayesianFullyConnectedNet(tf.keras.Model):
         self.all_layers = []
         
         self.norm_layer = tf.keras.layers.BatchNormalization()
-
-        kernel_prior_fn = lambda dtype, shape, name, trainable, add_variable_fn: tfp.distributions.Independent(
-                    tfp.distributions.Normal(loc=tf.zeros(shape, dtype=dtype), scale=1.0),
-                    reinterpreted_batch_ndims=len(shape)
-                )
-
         # Define Bayesian layers for each fully connected layer
         for i in range(len(nb_units) + 1):
             units = self.output_dim if i == len(nb_units) else self.nb_units[i]
             bayesian_layer = tfp.layers.DenseFlipout(
                 units=units,
-                activation=None,
-                kernel_prior_fn=kernel_prior_fn
+                activation=None
             )
             self.all_layers.append(bayesian_layer)
             
     def call(self, inputs, training=True):
         """ Return the output of the Bayesian network. """
-        #x = self.norm_layer(inputs)
-        x = inputs
+        x = self.norm_layer(inputs)
         for i, bayesian_layer in enumerate(self.all_layers[:-1]):
             with tf.name_scope("%s_layer_%d" % (self.model_name, i+1)):
                 x = bayesian_layer(x)
