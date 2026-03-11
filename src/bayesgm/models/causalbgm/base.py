@@ -570,7 +570,7 @@ class CausalBGM(object):
             return dose_response, mse_x, mse_y, mse_v
 
     # Predict with MCMC sampling
-    def predict(self, data, alpha=0.01, n_mcmc=3000, burn_in=5000, x_values=None, q_sd=1.0, sample_y=True, bs=100):
+    def predict(self, data, alpha=0.01, n_mcmc=3000, burn_in=5000, x_values=None, q_sd=1.0, sample_y=True, bs=10000):
         """Estimate causal effects with posterior intervals from latent MCMC samples.
 
         Parameters
@@ -591,8 +591,8 @@ class CausalBGM(object):
         sample_y : bool, default=True
             If ``True``, sample from the outcome model using the variance head.
             If ``False``, use the posterior mean of the outcome model.
-        bs : int, default=100
-            Number of test subjects processed per MCMC batch.
+        bs : int, default=10000
+            Number of test subjects processed per batch prediction.
 
         Returns
         -------
