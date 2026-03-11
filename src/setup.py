@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name="bayesgm", 
-    version="1.0.0",
+    version="1.0.1",
     author="Qiao Liu",
     author_email="qiao.liu@yale.edu",
     description="A toolkit for AI-driven Bayesian Generative Modeling",
