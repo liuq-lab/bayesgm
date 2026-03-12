@@ -1,0 +1,189 @@
+---
+title: "Bayesian Generative Modeling with BGM"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Bayesian Generative Modeling with BGM}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = identical(Sys.getenv("BAYESGM_RUN_VIGNETTES"), "true"),
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+This vignette shows a complete `BGM` workflow for the
+`Sim_heteroskedastic` setting. The code mirrors the Python workflow in
+`src/main.py`: generate data with `simulate_z_hetero`, split into train and
+test sets, train `BGM`, then impute the held-out response values.
+
+## Basic Running Instructions
+
+The R package is a thin wrapper around the Python `bayesgm` implementation.
+Installing the R package from local files, GitHub, or CRAN does **not**
+automatically install the Python `bayesgm` package for you.
+
+If you installed the R package from a local checkout of this repository, use
+the repository's `src/` directory when installing the Python backend:
+
+```r
+library(bayesgm)
+
+install_bayesgm_python(
+  python = "/path/to/python",
+  local_path = "/path/to/bayesgm/src"
+)
+
+configure_bayesgm(
+  python = "/path/to/python",
+  pythonpath = "/path/to/bayesgm/src"
+)
+```
+
+If you installed the R package from GitHub or CRAN and the Python `bayesgm`
+package is available from your Python package index, the one-time setup is:
+
+```r
+library(bayesgm)
+
+install_bayesgm_python(
+  python = "/path/to/python"
+)
+
+configure_bayesgm(
+  python = "/path/to/python"
+)
+```
+
+To run the code while rendering the vignette locally, set:
+
+- `RETICULATE_PYTHON` to the Python interpreter that has the Python `bayesgm` package available
+- `BAYESGM_PYTHONPATH` if you want to import the Python package from a source tree
+- `BAYESGM_RUN_VIGNETTES=true`
+
+```{r libraries}
+library(bayesgm)
+
+configure_bayesgm()
+stopifnot(bayesgm_available(configure = FALSE))
+```
+
+# Data Generation and Split
+
+```{r data-generation}
+sim_data <- load_sim_heteroskedastic(
+  n = 20000L,
+  z_dim = 10L,
+  x_dim = 100L,
+  seed = 42L,
+  split_seed = 123L
+)
+
+data_train <- sim_data$data_train
+X_test <- sim_data$X_test
+Y_test <- sim_data$Y_test
+data_test <- sim_data$data_test
+
+dim(data_train)
+dim(data_test)
+head(Y_test)
+```
+
+# Model Training
+
+```{r model-training}
+params <- list(
+  dataset = "Sim_heteroskedastic",
+  output_dir = tempdir(),
+  save_res = TRUE,
+  save_model = TRUE,
+  use_bnn = FALSE,
+  rank = 2L,
+  z_dim = 10L,
+  x_dim = ncol(data_train),
+  lr_theta = 0.005,
+  lr_z = 0.005,
+  g_units = c(64L, 64L, 64L, 64L, 64L),
+  kl_weight = 0.00005,
+  lr = 0.001,
+  g_d_freq = 1L,
+  use_z_rec = TRUE,
+  alpha = 0.0,
+  gamma = 0.0,
+  e_units = c(64L, 64L, 64L, 64L, 64L),
+  dz_units = c(64L, 32L, 8L),
+  dx_units = c(64L, 32L, 8L)
+)
+
+model <- BGM(params = params, random_seed = NULL)
+
+invisible(capture.output({
+  model <- model$fit(
+    data = data_train,
+    epochs = 200L,
+    epochs_per_eval = 10L,
+    batch_size = 32L,
+    use_egm_init = TRUE,
+    egm_n_iter = 50000L,
+    egm_batches_per_eval = 500L,
+    verbose = 1L
+  )
+}))
+```
+
+# Model Prediction
+
+```{r model-prediction}
+invisible(capture.output({
+  res <- model$predict(
+    data = data_test,
+    alpha = 0.05,
+    bs = 100L,
+    n_mcmc = 5000L,
+    burn_in = 5000L,
+    step_size = 0.01,
+    num_leapfrog_steps = 10L,
+    seed = 42L
+  )
+}))
+
+data_imputed <- as.matrix(res$data)
+pred_interval <- res$interval
+pred_y <- data_imputed[, ncol(data_imputed)]
+
+dim(data_imputed)
+dim(pred_interval)
+head(pred_y)
+```
+
+# Model Evaluation
+
+```{r model-evaluation, fig.width = 7, fig.height = 5}
+interval_y <- pred_interval[, 1, ]
+lower_y <- interval_y[, 1]
+upper_y <- interval_y[, 2]
+
+rmse_y <- sqrt(mean((pred_y - Y_test[, 1])^2))
+coverage_y <- mean(Y_test[, 1] >= lower_y & Y_test[, 1] <= upper_y)
+
+data.frame(
+  metric = c("RMSE", "Coverage"),
+  value = c(rmse_y, coverage_y)
+)
+
+plot(
+  Y_test[, 1],
+  pred_y,
+  pch = 16,
+  col = grDevices::adjustcolor("steelblue", alpha.f = 0.35),
+  xlab = "True held-out response",
+  ylab = "Imputed response",
+  main = "BGM Imputation on Sim_heteroskedastic"
+)
+abline(0, 1, col = "black", lwd = 2)
+```

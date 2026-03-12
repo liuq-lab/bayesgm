@@ -1,0 +1,25 @@
+Package: bayesgm
+Title: R Interface to the Python 'bayesgm' Toolkit
+Version: 0.1.0
+Authors@R: c(person("Qiao", "Liu", email = "qiao.liu@yale.edu", role = c("aut", "cre", "cph")))
+Description: Provides an R interface to the Python 'bayesgm' toolkit through
+    'reticulate'. The package exposes lightweight R wrappers around the
+    Python 'CausalBGM' and 'BGM' APIs so R users can configure models,
+    fit them from R, and obtain causal or generative-model predictions
+    without leaving the R workflow.
+License: MIT + file LICENSE
+URL: https://github.com/liuq-lab/bayesgm
+BugReports: https://github.com/liuq-lab/bayesgm/issues
+Depends: R (>= 4.1.0)
+SystemRequirements: Python (>= 3.9), Python package 'bayesgm'
+Imports:
+    R6,
+    reticulate
+Suggests:
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    withr
+VignetteBuilder: knitr
+Encoding: UTF-8
+Config/testthat/edition: 3
