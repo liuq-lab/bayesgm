@@ -49,10 +49,6 @@ def _build_causalbgm_parser(subparsers):
                         help="Learning rate for updating model parameters (default: 0.0001).")
     parser.add_argument('--lr_z', type=float, default=0.0001,
                         help="Learning rate for updating latent variables (default: 0.0001).")
-    parser.add_argument('--x_min', type=float, default=0.,
-                        help="Lower bound for treatment interval (default: 0.0).")
-    parser.add_argument('--x_max', type=float, default=3.,
-                        help="Upper bound for treatment interval (default: 3.0).")
     parser.add_argument('--x_values', type=float, nargs='+',
                         help="List of treatment values to be predicted. Provide space-separated values. Example: --x_values 0.5 1.0 1.5")
     parser.add_argument('--g_units', type=int, nargs='+', default=[64, 64, 64, 64, 64],
@@ -87,6 +83,8 @@ def _build_causalbgm_parser(subparsers):
                         help="Number of epochs in iterative updating algorithm (default: 100).")
     parser.add_argument('-M', '--n_mcmc', type=int, default=3000,
                         help="MCMC sample size (default: 3000).")
+    parser.add_argument('--burn_in', type=int, default=5000,
+                        help="Number of burn-in iterations for Metropolis-Hastings sampling (default: 5000).")
     parser.add_argument('-q', '--q_sd', type=float, default=1.,
                         help="Standard deviation for proposal distribution in MCMC, a negative q_sd denotes adaptive MCMC (default: 1.0).")
     parser.add_argument('--epochs_per_eval', type=int, default=10,
@@ -188,9 +186,22 @@ def _run_causalbgm(args):
 
     # Make predictions using the trained CausalBGM model
     if params['binary_treatment']:
-        causal_pre, pos_intervals = model.predict(data=data, alpha=params['alpha'], n_mcmc=params['n_mcmc'], q_sd=params['q_sd'])
+        causal_pre, pos_intervals = model.predict(
+            data=data,
+            alpha=params['alpha'],
+            n_mcmc=params['n_mcmc'],
+            burn_in=params['burn_in'],
+            q_sd=params['q_sd'],
+        )
     else:
-        causal_pre, pos_intervals = model.predict(data=data, alpha=params['alpha'], n_mcmc=params['n_mcmc'], x_values=params['x_values'], q_sd=params['q_sd'])
+        causal_pre, pos_intervals = model.predict(
+            data=data,
+            alpha=params['alpha'],
+            n_mcmc=params['n_mcmc'],
+            burn_in=params['burn_in'],
+            x_values=params['x_values'],
+            q_sd=params['q_sd'],
+        )
 
     # Save results
     save_data('{}/causal_effect_point_estimate.{}'.format(model.save_dir, params['save_format']), causal_pre)
@@ -288,10 +299,6 @@ def main_causalbgm(args=None):
                         help="Learning rate for updating model parameters (default: 0.0001).")
     parser.add_argument('--lr_z', type=float, default=0.0001,
                         help="Learning rate for updating latent variables (default: 0.0001).")
-    parser.add_argument('--x_min', type=float, default=0.,
-                        help="Lower bound for treatment interval (default: 0.0).")
-    parser.add_argument('--x_max', type=float, default=3.,
-                        help="Upper bound for treatment interval (default: 3.0).")
     parser.add_argument('--x_values', type=float, nargs='+',
                         help="List of treatment values to be predicted.")
     parser.add_argument('--g_units', type=int, nargs='+', default=[64, 64, 64, 64, 64],
@@ -322,6 +329,8 @@ def main_causalbgm(args=None):
                         help="Number of epochs in iterative updating algorithm (default: 100).")
     parser.add_argument('-M', '--n_mcmc', type=int, default=3000,
                         help="MCMC sample size (default: 3000).")
+    parser.add_argument('--burn_in', type=int, default=5000,
+                        help="Number of burn-in iterations for Metropolis-Hastings sampling (default: 5000).")
     parser.add_argument('-q', '--q_sd', type=float, default=1.,
                         help="Standard deviation for proposal distribution in MCMC (default: 1.0).")
     parser.add_argument('--epochs_per_eval', type=int, default=10,
