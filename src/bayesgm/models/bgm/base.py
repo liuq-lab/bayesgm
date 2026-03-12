@@ -320,10 +320,11 @@ class BGM(object):
                 MSE = tf.reduce_mean((data - data_x__)**2)
                 data_gen_1, sigma_square_x_1 = self.generate(nb_samples=5000)
                 data_gen_12, sigma_square_x_12 = self.generate(nb_samples=5000,use_x_sd=False)
-                np.savez('%s/init_data_gen_at_%d.npz'%(self.save_dir, batch_iter),
-                        gen1=data_gen_1, gen12=data_gen_12,
-                        z=data_z_, x_rec=data_x__, var1=sigma_square_x_1, var12=sigma_square_x_12
-                        )
+                if self.params['save_res']:
+                    np.savez('%s/init_data_gen_at_%d.npz'%(self.save_dir, batch_iter),
+                            gen1=data_gen_1, gen12=data_gen_12,
+                            z=data_z_, x_rec=data_x__, var1=sigma_square_x_1, var12=sigma_square_x_12
+                            )
                 print('MSE_x', MSE.numpy())
                 mse_x = self.evaluate(data = data, use_x_sd = True)
                 print('iter [%d/%d]: MSE_x: %.4f\n' % (batch_iter, egm_n_iter, mse_x))
@@ -827,4 +828,3 @@ class BGM(object):
         print(f"TFP MCMC Acceptance Rate: {acceptance_rate:.4f}")
         
         return samples
-
