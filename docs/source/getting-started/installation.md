@@ -77,21 +77,37 @@ pip install -e .
 python -c "import bayesgm; print(bayesgm.__version__)"
 ```
 
-## Install R package for bayesgm (TODO)
+## Install R package for bayesgm
 
 bayesgm R package is built with
 [reticulate](https://rstudio.github.io/reticulate/).
 
-Install from CRAN:
+Install from GitHub:
 
 ```r
-install.packages("bayesgm")
+install.packages("remotes")
+remotes::install_github("liuq-lab/bayesgm", subdir = "r-package/bayesgm")
 ```
 
-or from GitHub:
+Or install from a downloaded local repository:
+
+```bash
+R CMD INSTALL path/to/bayesgm/r-package/bayesgm
+```
+
+Note: installing the R package does **not** automatically install the Python `bayesgm` package.
+
+After installing the R package, you still need to make the Python `bayesgm` backend available to `reticulate`, for example by configuring:
 
 ```r
-devtools::install_github("liuq-lab/bayesgm", subdir = "r-package/bayesgm")
+library(bayesgm)
+
+configure_bayesgm(
+  python = "/path/to/python",
+  pythonpath = "/path/to/bayesgm/src"
+)
 ```
+
+
 
 

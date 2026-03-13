@@ -1,7 +1,7 @@
 from importlib import import_module
 from typing import TYPE_CHECKING
 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 
 if TYPE_CHECKING:
     from . import cli, datasets, models, utils
