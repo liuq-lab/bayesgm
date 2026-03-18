@@ -8,10 +8,14 @@ from .causal_samplers import (
 )
 from .prior_samplers import Gaussian_sampler, GMM_indep_sampler, Swiss_roll_sampler
 from .simulators import (
+    demand_design_h,
+    demand_design_structural_function,
+    make_demand_design_grid,
     simulate_regression, 
     simulate_low_rank_data, 
     simulate_heteroskedastic_data, 
-    simulate_z_hetero
+    simulate_z_hetero,
+    simulate_demand_design_iv,
 )
 
 __all__ = [
@@ -24,8 +28,12 @@ __all__ = [
     "Gaussian_sampler",
     "GMM_indep_sampler",
     "Swiss_roll_sampler",
+    "demand_design_h",
+    "demand_design_structural_function",
+    "make_demand_design_grid",
     "simulate_regression",
     "simulate_low_rank_data",
     "simulate_heteroskedastic_data",
     "simulate_z_hetero",
+    "simulate_demand_design_iv",
 ]

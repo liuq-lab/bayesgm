@@ -13,10 +13,11 @@ if TYPE_CHECKING:
         Sim_Hirano_Imbens_sampler,
         Sim_Sun_sampler,
     )
-    from .models.causalbgm import CausalBGM, FullMCMCCausalBGM, IdentifiableCausalBGM
+    from .models.causalbgm import CausalBGM, CausalBGM_IV, FullMCMCCausalBGM, IdentifiableCausalBGM
 
 _SYMBOL_TO_MODULE = {
     "CausalBGM": "bayesgm.models.causalbgm",
+    "CausalBGM_IV": "bayesgm.models.causalbgm",
     "IdentifiableCausalBGM": "bayesgm.models.causalbgm",
     "FullMCMCCausalBGM": "bayesgm.models.causalbgm",
     "Base_sampler": "bayesgm.datasets",
@@ -36,6 +37,7 @@ _MODULE_ATTRIBUTES = {
 
 __all__ = [
     "CausalBGM",
+    "CausalBGM_IV",
     "IdentifiableCausalBGM",
     "FullMCMCCausalBGM",
     "Base_sampler",

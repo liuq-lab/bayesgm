@@ -1,0 +1,59 @@
+# General parameters
+dataset: Sim_Demand_Design_IV
+output_dir: "."
+save_res: False
+save_model: False
+binary_treatment: False
+use_bnn: False
+n_samples: 1000
+rho: 0.5
+seed: 0
+price_points: 20
+time_points: 20
+normalize_before_training: True
+structural_methods: ["encoder", "map", "mcmc"]
+training_structural_monitor_method: encoder
+fit_epochs: 200
+fit_epochs_per_eval: 10
+fit_batch_size: 32
+fit_egm_n_iter: 30000
+fit_egm_batches_per_eval: 500
+fit_first_stage_warmup_epochs: 0
+fit_model_selection_metric: structural_mse
+fit_restore_best_weights: True
+fit_use_progress_bar: False
+
+# Structural evaluation
+structural_eval_return_interval: False
+structural_eval_alpha: 0.01
+
+# Model parameters
+z_dims: [2, 1, 1, 2]
+v_dim: 2
+w_dim: 1
+lr_theta: 0.0001
+lr_z: 0.0001
+g_units: [64,64,64,64,64]
+f_units: [64,32,8]
+h_units: [64,32,8]
+e_units: [64,64,64,64,64]
+dz_units: [64,32,8]
+kl_weight: 0.0001
+
+# EGM initialization
+lr: 0.0002
+g_d_freq: 5
+use_z_rec: True
+
+# IV Monte Carlo settings
+iv_mc_samples: 1000
+eval_mc_samples: 1000
+
+# Default structural latent inference settings used by the model API
+structural_latent_method: map
+structural_map_steps: 1000
+structural_map_lr: 0.0001
+structural_mcmc_n_samples: 3000
+structural_mcmc_burn_in: 5000
+structural_mcmc_q_sd: 1.0
+structural_mcmc_bs: 3000

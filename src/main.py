@@ -2,17 +2,251 @@ import yaml
 import argparse
 import numpy as np
 import sys
-from bayesgm.models import CausalBGM, BGM, MNISTBGM
+from bayesgm.models import CausalBGM, CausalBGM_IV, BGM, MNISTBGM
 from bayesgm.datasets import (
     simulate_z_hetero,
     Sim_Hirano_Imbens_sampler, 
-    Semi_acic_sampler
+    Semi_acic_sampler,
+    simulate_demand_design_iv,
+    make_demand_design_grid
 )
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
-gpu = tf.config.list_physical_devices('GPU')[0]
-tf.config.experimental.set_memory_growth(gpu, True)
-#tf.config.set_visible_devices([], 'GPU')  # 显式禁止使用 GPU
+gpus = tf.config.list_physical_devices("GPU")
+if gpus:
+    tf.config.experimental.set_memory_growth(gpus[0], True)
+tf.config.set_visible_devices([], 'GPU')  # 显式禁止使用 GPU
+
+
+def _fit_standardizer(data):
+    mean = np.mean(data, axis=0, keepdims=True).astype(np.float32)
+    scale = np.std(data, axis=0, keepdims=True).astype(np.float32)
+    scale = np.where(scale < 1e-6, 1.0, scale).astype(np.float32)
+    return {"mean": mean, "scale": scale}
+
+
+def _transform(data, stats):
+    return ((data - stats["mean"]) / stats["scale"]).astype(np.float32)
+
+
+def _inverse_transform(data, stats):
+    return (data * stats["scale"] + stats["mean"]).astype(np.float32)
+
+
+def _summarize_ranges(train):
+    print("Observed data ranges before normalization:")
+    for key in ("x", "y", "v", "w"):
+        data = np.asarray(train[key], dtype=np.float32)
+        print(
+            f"  {key}: min={float(np.min(data)):.4f}, max={float(np.max(data)):.4f}, "
+            f"mean={float(np.mean(data)):.4f}, std={float(np.std(data)):.4f}"
+        )
+
+def _standardize_demand_design_data(train, grid):
+    stats = {key: _fit_standardizer(train[key]) for key in ("x", "y", "v", "w")}
+    train_std = {
+        "x": _transform(train["x"], stats["x"]),
+        "y": _transform(train["y"], stats["y"]),
+        "v": _transform(train["v"], stats["v"]),
+        "w": _transform(train["w"], stats["w"]),
+        "y_struct": train["y_struct"],
+    }
+    grid_std = {
+        "x": _transform(grid["x"], stats["x"]),
+        "v": _transform(grid["v"], stats["v"]),
+        "y_struct": grid["y_struct"],
+    }
+    return train_std, grid_std, stats
+
+
+def _make_structural_monitor_callback(
+    grid_x,
+    grid_v,
+    y_true,
+    latent_method="encoder",
+    y_stats=None,
+    additional_methods=None,
+):
+    methods = [latent_method]
+    for method in additional_methods or ():
+        if method not in methods:
+            methods.append(method)
+
+    def callback(model, stage, epoch, metrics):
+        results = {"structural_latent_method": latent_method}
+        for method in methods:
+            data_y_pred = model.predict_structural(
+                grid_x,
+                grid_v,
+                latent_method=method,
+            )
+            if y_stats is not None:
+                data_y_pred = _inverse_transform(data_y_pred, y_stats)
+            structural_mse = float(np.mean((y_true - data_y_pred) ** 2))    
+            results[f"structural_mse_{method}"] = structural_mse
+        results["structural_mse"] = results[f"structural_mse_{latent_method}"]
+        return results
+
+    return callback
+
+
+def _print_training_history(history):
+    if not history:
+        return
+
+    structural_keys = sorted(
+        {
+            key
+            for record in history
+            for key in record
+            if key.startswith("structural_mse_")
+        }
+    )
+
+    print("\nTraining metric history")
+    header = f"{'stage':<12} {'epoch':>6} {'outcome':>8} {'mse_x':>12} {'mse_y':>12} {'mse_v':>12}"
+    for key in structural_keys:
+        method = key.removeprefix("structural_mse_")
+        header += f" {method:>14}"
+    print(header)
+    print("-" * len(header))
+    for record in history:
+        epoch = "-" if record["epoch"] is None else str(record["epoch"])
+        row = (
+            f"{record['stage']:<12} {epoch:>6} {str(record['include_outcome']):>8} "
+            f"{record['mse_x']:>12.6f} {record['mse_y']:>12.6f} {record['mse_v']:>12.6f}"
+        )
+        for key in structural_keys:
+            value = record.get(key)
+            row += f" {('-' if value is None else f'{value:.6f}'):>14}"
+        print(row)
+
+    if structural_keys:
+        for key in structural_keys:
+            method = key.removeprefix("structural_mse_")
+            method_records = [record for record in history if key in record]
+            best_record = min(method_records, key=lambda r: r[key])
+            last_record = method_records[-1]
+            print(
+                "\nBest structural checkpoint "
+                f"[{method}]: stage={best_record['stage']}, epoch={best_record['epoch']}, "
+                f"structural_MSE={best_record[key]:.6f}"
+            )
+            print(
+                "Last logged structural checkpoint "
+                f"[{method}]: stage={last_record['stage']}, epoch={last_record['epoch']}, "
+                f"structural_MSE={last_record[key]:.6f}"
+            )
+
+
+def _fit_demand_design_model(params, train, evaluation_callback=None):
+    model = CausalBGM_IV(params=params, random_seed=None)
+    model.fit(
+        data=(train["x"], train["y"], train["v"], train["w"]),
+        epochs=int(params.get("fit_epochs", 100)),
+        epochs_per_eval=int(params.get("fit_epochs_per_eval", 10)),
+        batch_size=int(params.get("fit_batch_size", 32)),
+        use_egm_init=True,
+        egm_n_iter=int(params.get("fit_egm_n_iter", 10000)),
+        egm_batches_per_eval=int(params.get("fit_egm_batches_per_eval", 500)),
+        verbose=1,
+        first_stage_warmup_epochs=int(params.get("fit_first_stage_warmup_epochs", 30)),
+        evaluation_callback=evaluation_callback,
+    )
+    return model
+
+
+def _evaluate_structural_methods(
+    model,
+    grid_x,
+    grid_v,
+    y_true,
+    methods,
+    y_stats=None,
+):
+    results = {}
+    for method in methods:
+        data_y_pred = model.predict_structural(
+            grid_x,
+            grid_v,
+            latent_method=method,
+        )
+        if y_stats is not None:
+            data_y_pred = _inverse_transform(data_y_pred, y_stats)
+        mse = float(np.mean((y_true - data_y_pred) ** 2))
+        results[method] = mse
+        print(f"Structural MSE [{method}] = {mse:.6f}")
+    return results
+
+
+def run_demand_design_iv(params):
+    """Run demand-design IV experiments aligned with the DFIV benchmark."""
+    train = simulate_demand_design_iv(
+        n_samples=int(params.get("n_samples", 5000)),
+        rho=float(params.get("rho", 0.5)),
+        seed=int(params.get("seed", 0)),
+    )
+    grid = make_demand_design_grid(
+        price_points=int(params.get("price_points", 20)),
+        time_points=int(params.get("time_points", 20)),
+    )
+    _summarize_ranges(train)
+
+    methods = tuple(
+        params.get(
+            "structural_methods",
+            [params.get("structural_latent_method", "map")],
+        )
+    )
+    normalize_before_training = bool(params.get("normalize_before_training", False))
+
+    if normalize_before_training:
+        print("\nNormalized-space experiment")
+        train_std, grid_std, stats = _standardize_demand_design_data(train, grid)
+        structural_monitor_method = params.get("training_structural_monitor_method", "encoder")
+        additional_monitor_methods = [
+            method
+            for method in methods
+            if method != structural_monitor_method
+        ]
+        evaluation_callback = _make_structural_monitor_callback(
+            grid_std["x"],
+            grid_std["v"],
+            grid["y_struct"],
+            latent_method=structural_monitor_method,
+            y_stats=stats["y"],
+            additional_methods=additional_monitor_methods,
+        )
+        model = _fit_demand_design_model(
+            params,
+            train_std,
+            evaluation_callback=evaluation_callback,
+        )
+        _print_training_history(getattr(model, "training_history", []))
+        causal_pre, mse_x, mse_y, mse_v = model.evaluate(
+            data=(train_std["x"], train_std["y"], train_std["v"], train_std["w"]),
+            data_z=None,
+            nb_intervals=int(params.get("nb_intervals", 20)),
+        )
+        print(
+            "Training evaluate:",
+            causal_pre.shape,
+            f"MSE_x={float(mse_x):.4f}",
+            f"MSE_y={float(mse_y):.4f}",
+            f"MSE_v={float(mse_v):.4f}",
+        )
+        results = _evaluate_structural_methods(
+            model,
+            grid_std["x"],
+            grid_std["v"],
+            grid["y_struct"],
+            methods=methods,
+            y_stats=stats["y"],
+        )
+        print("\nStructural MSE summary (DFIV-compatible original outcome space)")
+        for method in methods:
+            print(f"  normalized/{method}: {results[method]:.6f}")
+        return
 
 #k l z e b u
 if __name__=="__main__":
@@ -67,6 +301,8 @@ if __name__=="__main__":
         # Make predictions using the trained CausalBGM model
         causal_pre, pos_intervals = model.predict(data=(x,y,v), alpha=0.01, n_mcmc=3000, q_sd=1.0)
 
+    elif params["dataset"] == "Sim_Demand_Design_IV":
+        run_demand_design_iv(params)
 
     elif params['dataset'] == 'Sim_heteroskedastic':        
         X,Y = simulate_z_hetero(n=20000, k=params['z_dim'], d=params['x_dim']-1)
