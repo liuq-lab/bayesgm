@@ -2,21 +2,25 @@ import yaml
 import argparse
 import numpy as np
 import sys
-from bayesgm.models import CausalBGM, CausalBGM_IV, BGM, MNISTBGM
+import json
+from pathlib import Path
+
+import pandas as pd
+from bayesgm.models import CausalBGM, CausalBGM_IV, BGM, MNISTBGM, BGM_MNAR
 from bayesgm.datasets import (
+    simulate_mnar_factor_data,
     simulate_z_hetero,
     Sim_Hirano_Imbens_sampler, 
     Semi_acic_sampler,
     simulate_demand_design_iv,
     make_demand_design_grid
 )
+from bayesgm.utils import benchmark_mnar_imputers, rmse_on_missing_entries
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
-gpus = tf.config.list_physical_devices("GPU")
-if gpus:
-    tf.config.experimental.set_memory_growth(gpus[0], True)
-tf.config.set_visible_devices([], 'GPU')  # 显式禁止使用 GPU
-
+gpu = tf.config.list_physical_devices('GPU')[0]
+tf.config.experimental.set_memory_growth(gpu, True)
+#tf.config.set_visible_devices([], 'GPU')  # 显式禁止使用 GPU
 
 def _fit_standardizer(data):
     mean = np.mean(data, axis=0, keepdims=True).astype(np.float32)
@@ -247,7 +251,6 @@ def run_demand_design_iv(params):
         for method in methods:
             print(f"  normalized/{method}: {results[method]:.6f}")
         return
-
 #k l z e b u
 if __name__=="__main__":
     parser = argparse.ArgumentParser()
@@ -322,73 +325,82 @@ if __name__=="__main__":
                                                     num_leapfrog_steps=10, 
                                                     seed=42)
         print(data_x_pred.shape, pred_interval.shape)
-        np.savez(f'data_pred_test1.npz', data_x_pred=data_x_pred, pred_interval=np.array(pred_interval, dtype=object))
-        sys.exit()
+        #np.savez(f'data_pred_test1.npz', data_x_pred=data_x_pred, pred_interval=np.array(pred_interval, dtype=object))
 
-        
-        if True:
-            model.egm_init(data=data, n_iter=B, batch_size=32, batches_per_eval=5000, verbose=1)
-            model.fit(data=data, epochs=E, epochs_per_eval=20, verbose=1)
-            data = np.hstack([X_test, np.full((X_test.shape[0], 1), np.nan)])
-            data_x_pred, pred_interval = model.predict(data=data, 
-                                                        alpha=0.05, 
-                                                        bs=100,
-                                                        n_mcmc=5000, 
-                                                        burn_in=5000, 
-                                                        step_size=0.01, 
-                                                        num_leapfrog_steps=10, 
-                                                        seed=42)
+    elif params['dataset'] == 'Synthetic_MNAR':
+        missing_rate = float(params.get('missing_rate', 0.1))
 
-            X_test_pred = data_x_pred[:,:,-1]
-            X_test_pred_mean = np.mean(X_test_pred, axis=0)
-            X_test_pred_median = np.median(X_test_pred, axis=0)
-            print(X_test_pred.shape, X_test_pred_mean.shape, X_test_pred_median.shape)
-            from scipy.stats import pearsonr, spearmanr
-            corr_pred_mean, _ = pearsonr(Y_test, X_test_pred_mean)
-            print(f"Pearson's correlation coefficient mean: {corr_pred_mean}")
-            corr_pred_median, _ = pearsonr(Y_test, X_test_pred_median)
-            print(f"Pearson's correlation coefficient median: {corr_pred_median}")
-            np.savez(f'data_pred_heter_{z_dim}_{x_dim}_{E}_{B}_{params["use_bnn"]}_{units}.npz', data_x_pred=data_x_pred, pred_interval=pred_interval)
-            # length_gt = np.load('heter_length_gt_10_100.npy')
-            # length_bgm = pred_interval[:,0,1]-pred_interval[:,0,0]
-            # print('Average interval length:', np.mean(length_bgm), np.mean(length_gt))
-            # print('interval length PCC:', pearsonr(length_bgm, length_gt)[0])
-            # print('interval length Spearman:', spearmanr(length_bgm, length_gt)[0])
-        else:
-            checkpoint_path = 'checkpoints/Sim_heteroskedastic_5e-05_0.0_10_200_50000/20251030_214921'
-            #for epoch in range(100,500+20,20):
-            for epoch in [200]:
-                print(f"Epoch {epoch}")
-                base_path = checkpoint_path + f"/weights_at_{epoch}"
-                model.g_net.load_weights(f"{base_path}_generator.weights.h5")
-                data = np.hstack([X_test, np.full((X_test.shape[0], 1), np.nan)])
-                data_x_pred, pred_interval = model.predict(data=data, 
-                                                            alpha=0.05, 
-                                                            bs=500, 
-                                                            n_mcmc=5000, 
-                                                            burn_in=5000, 
-                                                            step_size=0.01, 
-                                                            num_leapfrog_steps=10, 
-                                                            seed=42)
-                print(data_x_pred.shape, pred_interval.shape)
-                np.savez(f'data_pred_test.npz', data_x_pred=data_x_pred, pred_interval=np.array(pred_interval, dtype=object))
-                sys.exit()
-                X_test_pred = data_x_pred[:,:,-1]
-                X_test_pred_mean = np.mean(X_test_pred, axis=0)
-                X_test_pred_median = np.median(X_test_pred, axis=0)
-                print(X_test_pred.shape, X_test_pred_mean.shape, X_test_pred_median.shape)
-                from scipy.stats import pearsonr, spearmanr
-                corr_pred_mean, _ = pearsonr(Y_test, X_test_pred_mean)
-                print(f"Pearson's correlation coefficient mean: {corr_pred_mean}")
-                corr_pred_median, _ = pearsonr(Y_test, X_test_pred_median)
-                print(f"Pearson's correlation coefficient median: {corr_pred_median}")
-                np.savez('data_pred_heter_10_100.npz', data_x_pred=data_x_pred, pred_interval=pred_interval)
-                length_gt = np.load('heter_length_gt_10_100.npy')
-                length_bgm = pred_interval[:,0,1]-pred_interval[:,0,0]
-                print('Average interval length:', np.mean(length_bgm), np.mean(length_gt))
-                print('interval length PCC:', pearsonr(length_bgm, length_gt)[0])
-                print('interval length Spearman:', spearmanr(length_bgm, length_gt)[0])
-                #np.savez('data_pred_heter_10_100.npz', data_x_pred=data_x_pred, pred_interval=pred_interval)
+        data = simulate_mnar_factor_data(
+            n_samples=params['n_samples'],
+            x_dim=params['x_dim'],
+            z_dim=params['z_dim'],
+            missing_rate=0.1,
+            seed=123
+        )
+
+        model = BGM_MNAR(params, random_seed=None)
+        model.fit(data=data['x_obs'], mask=data['mask'], x_true=data['x_full'], verbose=1)
+        mcmc_imputed, intervals = model.predict(
+            data=data['x_obs'],
+            mask=data['mask'],
+            x_true=data['x_full'],
+            alpha=0.05,
+            n_mcmc=2, 
+            burn_in=2, 
+            step_size=0.01, 
+            num_leapfrog_steps=1, 
+            seed=42,
+            verbose=1
+        )
+
+        if model.last_prediction_ is None:
+            raise RuntimeError('BGM_MNAR.predict() did not populate prediction diagnostics.')
+        map_imputed = model.last_prediction_['map_imputed']
+
+        metrics = {
+            'method_name': 'bgm_mnar',
+            'missingness_rate': missing_rate,
+            'map_rmse': rmse_on_missing_entries(data['x_full'], map_imputed, data['mask']),
+            'mcmc_rmse': rmse_on_missing_entries(data['x_full'], mcmc_imputed, data['mask']),
+            'save_dir': model.save_dir,
+        }
+
+        save_dir = Path(model.save_dir)
+        # save_dir.mkdir(parents=True, exist_ok=True)
+        # with open(save_dir / 'mnar_single_rate_metrics.json', 'w', encoding='utf-8') as handle:
+        #     json.dump(metrics, handle, indent=2)
+        # np.savez(save_dir / 'mnar_single_rate_intervals.npz', intervals=np.array(intervals, dtype=object))
+
+        baseline = benchmark_mnar_imputers(
+            x_true=data['x_full'],
+            x_obs=data['x_obs'],
+            mask=data['mask'],
+            params=params,
+            missing_rate=missing_rate,
+            seed=123,
+            results_path=str(save_dir / 'baseline_results.csv'),
+        )[['method_name', 'missingness_rate', 'rmse']].copy()
+        bgm_rows = pd.DataFrame([
+            {
+                'method_name': 'bgm_mnar_mcmc',
+                'missingness_rate': missing_rate,
+                'rmse': metrics['mcmc_rmse'],
+            },
+            {
+                'method_name': 'bgm_mnar_map',
+                'missingness_rate': missing_rate,
+                'rmse': metrics['map_rmse'],
+            },
+        ])
+        comparison = pd.concat([bgm_rows, baseline], ignore_index=True)
+        comparison = comparison.sort_values('rmse', kind='stable').reset_index(drop=True)
+        comparison['delta_vs_bgm_mnar_map'] = comparison['rmse'] - metrics['map_rmse']
+        comparison.to_csv(save_dir / f'comparison_missing_rate_{missing_rate:.1f}.csv', index=False)
+        print(f'\nBGM_MNAR comparison at missing rate {missing_rate:.1f}')
+        print(comparison.to_string(index=False))
+
+        print('\nBGM_MNAR metrics')
+        print(json.dumps(metrics, indent=2))
 
     elif params['dataset'] == 'MNIST':
         params['dataset'] = 'MNIST_%s_%s_%d_%d_%d'%(kl_weight, alpha, z_dim, E, B)
