@@ -1,0 +1,42 @@
+dataset: Synthetic_MNAR
+output_dir: .
+save_model: false
+save_res: true
+use_bnn: false
+n_samples: 5000
+x_dim: 50
+z_dim: 5
+missing_rate: 0.1
+batch_size: 32
+epochs: 50
+epochs_per_eval: 5
+lr: 0.001
+lr_theta: 0.001
+lr_phi: 0.001
+lr_z: 0.001
+lr_x: 0.001
+gamma: 0.0
+alpha: 0.0
+kl_weight: 0.00005
+g_d_freq: 1
+seed: 123
+g_units: [64, 64, 64, 64, 64]
+e_units: [64, 64, 64, 64, 64]
+dz_units: [64, 32, 8]
+dx_units: [64, 32, 8]
+missingness_units: [64, 64]
+egm_init:
+  enabled: true
+  n_iter: 1000
+  batches_per_eval: 500
+posterior:
+  z_map_steps: 10
+  x_map_steps: 10
+  test_epochs: 10
+  test_z_map_steps: 10
+  test_x_map_steps: 10
+  clip_grad_norm: 25.0
+  x_clip_value: 8.0
+  x_refine_steps_for_mcmc: 1
+  z_update_mode: map
+  x_update_mode: map
