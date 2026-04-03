@@ -121,6 +121,92 @@ def test_observed_entries_stay_fixed_during_prediction():
     np.testing.assert_allclose(imputed[dataset["mask"] == 1.0], dataset["x_full"][dataset["mask"] == 1.0], atol=1e-5)
 
 
+def test_same_training_data_skips_map_stage():
+    params = _small_params(seed=13)
+    dataset = simulate_mnar_factor_data(
+        n_samples=24,
+        x_dim=params["x_dim"],
+        z_dim=params["z_dim"],
+        missing_rate=0.3,
+        seed=params["seed"],
+    )
+
+    model = BGM_MNAR(params, random_seed=params["seed"])
+    model.fit(data=dataset["x_obs"], mask=dataset["mask"], x_true=dataset["x_full"], verbose=0)
+
+    def fail_run_map(*args, **kwargs):
+        raise AssertionError("_run_map_inference should not be called for training data.")
+
+    model._run_map_inference = fail_run_map
+    imputed, _ = model.predict(
+        data=dataset["x_obs"],
+        mask=dataset["mask"],
+        return_samples=False,
+        n_mcmc=4,
+        burn_in=4,
+        step_size=0.01,
+        num_leapfrog_steps=4,
+        seed=params["seed"],
+        verbose=0,
+    )
+
+    assert np.isfinite(imputed).all()
+
+
+def test_adapt_prediction_updates_theta_and_phi():
+    params = _small_params(seed=15)
+    train = simulate_mnar_factor_data(
+        n_samples=24,
+        x_dim=params["x_dim"],
+        z_dim=params["z_dim"],
+        missing_rate=0.3,
+        seed=params["seed"],
+    )
+    shifted = simulate_mnar_factor_data(
+        n_samples=24,
+        x_dim=params["x_dim"],
+        z_dim=params["z_dim"],
+        missing_rate=0.3,
+        seed=params["seed"] + 1,
+    )
+
+    model = BGM_MNAR(params, random_seed=params["seed"])
+    model.fit(data=train["x_obs"], mask=train["mask"], x_true=train["x_full"], verbose=0)
+
+    theta_calls = {"count": 0}
+    phi_calls = {"count": 0}
+    original_update_theta = model._update_theta
+    original_update_phi = model._update_phi
+
+    def counted_theta(*args, **kwargs):
+        theta_calls["count"] += 1
+        return original_update_theta(*args, **kwargs)
+
+    def counted_phi(*args, **kwargs):
+        phi_calls["count"] += 1
+        return original_update_phi(*args, **kwargs)
+
+    model._update_theta = counted_theta
+    model._update_phi = counted_phi
+    imputed, _ = model.predict(
+        data=shifted["x_obs"],
+        mask=shifted["mask"],
+        x_true=shifted["x_full"],
+        adapt=True,
+        return_samples=False,
+        n_mcmc=4,
+        burn_in=4,
+        step_size=0.01,
+        num_leapfrog_steps=4,
+        seed=params["seed"],
+        verbose=0,
+    )
+
+    assert theta_calls["count"] > 0
+    assert phi_calls["count"] > 0
+    assert np.isfinite(imputed).all()
+
+
 def test_smoke_fit_and_predict_are_finite():
     params = _small_params(seed=11)
     dataset = simulate_mnar_factor_data(

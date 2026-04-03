@@ -97,7 +97,7 @@ class BGM_MNAR(BGM):
             axis=1,
         )
         mse = tf.reduce_mean((data_x - mu_x) ** 2)
-        return tf.reduce_mean(nll), mse
+        return nll, mse
 
     @tf.function
     def _mask_nll(
@@ -110,7 +110,7 @@ class BGM_MNAR(BGM):
 
         logits = self.phi_net(data_x, training=training)
         bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=tf.cast(mask, tf.float32), logits=logits)
-        return tf.reduce_mean(tf.reduce_sum(bce, axis=1))
+        return tf.reduce_sum(bce, axis=1)
     
 
     def _map_update_z(
@@ -125,7 +125,7 @@ class BGM_MNAR(BGM):
         with tf.GradientTape() as tape:
             batch_z = tf.gather(data_z, batch_indices, axis=0)
             batch_x = tf.gather(data_x, batch_indices, axis=0)
-            loss_px_z, _ = self._generator_nll(batch_z, batch_x, training=False)
+            loss_px_z = tf.reduce_mean(self._generator_nll(batch_z, batch_x, training=False)[0])
             loss_prior_z = tf.reduce_mean(0.5 * tf.reduce_sum(batch_z ** 2, axis=1))
             loss = loss_px_z + loss_prior_z
 
@@ -148,8 +148,8 @@ class BGM_MNAR(BGM):
         with tf.GradientTape() as tape:
             batch_z = tf.gather(data_z, batch_indices, axis=0)
             batch_x = tf.gather(data_x, batch_indices, axis=0)
-            loss_px_z, _ = self._generator_nll(batch_z, batch_x, training=False)
-            loss_pr_x = self._mask_nll(batch_x, mask, training=False)
+            loss_px_z = tf.reduce_mean(self._generator_nll(batch_z, batch_x, training=False)[0])
+            loss_pr_x = tf.reduce_mean(self._mask_nll(batch_x, mask, training=False))
             loss = loss_px_z + loss_pr_x
 
         gradients = tape.gradient(loss, data_x)
@@ -180,6 +180,7 @@ class BGM_MNAR(BGM):
 
         with tf.GradientTape() as tape:
             loss_x, loss_mse = self._generator_nll(data_z, data_x, training=True)
+            loss_x = tf.reduce_mean(loss_x)
             if self.params["use_bnn"]:
                 loss_kl = sum(self.g_net.losses)
                 loss_x += loss_kl * self.params["kl_weight"]
@@ -201,7 +202,7 @@ class BGM_MNAR(BGM):
         """Update the missingness-model parameters ``phi``."""
 
         with tf.GradientTape() as tape:
-            loss_r_x = self._mask_nll(data_x, mask, training=True)
+            loss_r_x = tf.reduce_mean(self._mask_nll(data_x, mask, training=True))
             if self.params["use_bnn"]:
                 loss_kl = sum(self.phi_net.losses)
                 loss_r_x += loss_kl * self.params["kl_weight"]
@@ -234,8 +235,8 @@ class BGM_MNAR(BGM):
         loss_prior_z = tf.reduce_mean(0.5 * tf.reduce_sum(z_tensor ** 2, axis=1))
 
         metrics = {
-            "generator_nll": float(loss_px_z.numpy()),
-            "mask_nll": float(loss_pr_x.numpy()),
+            "generator_nll": float(tf.reduce_mean(loss_px_z).numpy()),
+            "mask_nll": float(tf.reduce_mean(loss_pr_x).numpy()),
             "latent_prior": float(loss_prior_z.numpy()),
             "reconstruction_mse": float(loss_mse.numpy()),
         }
@@ -252,11 +253,13 @@ class BGM_MNAR(BGM):
     ) -> "BGM_MNAR":
         """Fit the MNAR model on incomplete data."""
 
+        self.train_data = np.array(data, copy=True)
+        
         # fill missing values with missforest and infer mask from NaN in data
         x_obs, resolved_mask = prepare_masked_data(
             data,
             mask=mask,
-            initialization="missforest"
+            initialization="mean"
         )
 
         if x_obs.shape[1] != self.params["x_dim"]:
@@ -376,8 +379,9 @@ class BGM_MNAR(BGM):
         x_map_steps: int,
         x_true: Optional[np.ndarray] = None,
         verbose: int = 1,
+        adapt: bool = False,
     ) -> Tuple[tf.Variable, tf.Variable]:
-        """Run alternating MAP updates with fixed ``theta`` and ``phi``."""
+        """Run alternating MAP updates, optionally adapting ``theta`` and ``phi``."""
 
         if self.egm_params["enabled"]:
             z_init = self.e_net(x_obs, training=False).numpy().astype(np.float32)
@@ -389,6 +393,7 @@ class BGM_MNAR(BGM):
 
         z_optimizer = tf.keras.optimizers.Adam(self.params["lr_z"], beta_1=0.9, beta_2=0.99)
         x_optimizer = tf.keras.optimizers.Adam(self.params["lr_x"], beta_1=0.9, beta_2=0.99)
+        self.inference_history_ = []
 
         n_rows = x_obs.shape[0]
         batch_size = min(self.params["batch_size"], n_rows)
@@ -398,6 +403,8 @@ class BGM_MNAR(BGM):
             epoch_metrics = {
                 "latent_map_loss": [],
                 "x_map_loss": [],
+                "theta_loss": [],
+                "phi_loss": [],
             }
             for start in range(0, n_rows, batch_size):
                 batch_idx = permutation[start:start + batch_size]
@@ -426,23 +433,46 @@ class BGM_MNAR(BGM):
 
                 batch_z = tf.gather(data_z, batch_indices, axis=0)
                 batch_x = tf.gather(data_x, batch_indices, axis=0)
+                if adapt:
+                    theta_loss, _ = self._update_theta(batch_z, batch_x)
+                    phi_loss = self._update_phi(batch_x, batch_mask)
+                    epoch_metrics["theta_loss"].append(float(theta_loss.numpy()))
+                    epoch_metrics["phi_loss"].append(float(phi_loss.numpy()))
                 self._assert_finite_numpy(batch_z.numpy(), "batch_z")
                 self._assert_finite_numpy(batch_x.numpy(), "batch_x")
             
             if epoch % self.params["epochs_per_eval"] == 0:
                 metrics = self._evaluate_state(x_obs, mask, data_z, data_x, x_true=x_true)
+                metrics["epoch"] = epoch
                 metrics["latent_map_loss_mean"] = float(np.mean(epoch_metrics["latent_map_loss"]))
                 metrics["x_map_loss_mean"] = float(np.mean(epoch_metrics["x_map_loss"]))
+                if adapt:
+                    metrics["theta_loss_mean"] = float(np.mean(epoch_metrics["theta_loss"]))
+                    metrics["phi_loss_mean"] = float(np.mean(epoch_metrics["phi_loss"]))
+                self.inference_history_.append(metrics)
                 if verbose:
-                    print(
-                        "Test Epoch [{}/{}] latent_map={:.4f} x_map={:.4f} rmse={}".format(
-                            epoch,
-                            epochs,
-                            metrics["latent_map_loss_mean"],
-                            metrics["x_map_loss_mean"],
-                            "n/a" if "rmse_missing_only" not in metrics else f"{metrics['rmse_missing_only']:.4f}",
+                    if adapt:
+                        print(
+                            "Adapt Epoch [{}/{}] latent_map={:.4f} x_map={:.4f} theta={:.4f} phi={:.4f} rmse={}".format(
+                                epoch,
+                                epochs,
+                                metrics["latent_map_loss_mean"],
+                                metrics["x_map_loss_mean"],
+                                metrics["theta_loss_mean"],
+                                metrics["phi_loss_mean"],
+                                "n/a" if "rmse_missing_only" not in metrics else f"{metrics['rmse_missing_only']:.4f}",
+                            )
                         )
-                    )
+                    else:
+                        print(
+                            "Test Epoch [{}/{}] latent_map={:.4f} x_map={:.4f} rmse={}".format(
+                                epoch,
+                                epochs,
+                                metrics["latent_map_loss_mean"],
+                                metrics["x_map_loss_mean"],
+                                "n/a" if "rmse_missing_only" not in metrics else f"{metrics['rmse_missing_only']:.4f}",
+                            )
+                        )
 
         return data_z, data_x
 
@@ -468,102 +498,6 @@ class BGM_MNAR(BGM):
 
         return tf.clip_by_norm(gradient, clip_norm)
 
-    def _sample_posterior_z(
-        self,
-        x_full: np.ndarray,
-        initial_z: Optional[np.ndarray] = None,
-        n_mcmc: Optional[int] = None,
-        burn_in: Optional[int] = None,
-        step_size: Optional[float] = None,
-        num_leapfrog_steps: Optional[int] = None,
-        seed: Optional[int] = None,
-    ) -> np.ndarray:
-        """Sample ``Z`` from ``p(z | x, theta)`` using HMC."""
-
-        data = tf.convert_to_tensor(x_full, dtype=tf.float32)
-        n_rows = x_full.shape[0]
-        z_dim = self.params["z_dim"]
-
-        if initial_z is None:
-            initial_state = tf.random.normal(
-                shape=(n_rows, z_dim),
-                mean=0.0,
-                stddev=1.0,
-                seed=seed,
-                dtype=tf.float32,
-            )
-        else:
-            initial_state = tf.convert_to_tensor(initial_z, dtype=tf.float32)
-
-        def target_log_prob_fn(z):
-            return self.get_log_posterior(z, data, None, None)
-
-        hmc_kernel = tfm.HamiltonianMonteCarlo(
-            target_log_prob_fn=target_log_prob_fn,
-            step_size=step_size,
-            num_leapfrog_steps=num_leapfrog_steps,
-        )
-        adaptive_kernel = tfm.SimpleStepSizeAdaptation(
-            inner_kernel=hmc_kernel,
-            num_adaptation_steps=int(burn_in * 0.8),
-            target_accept_prob=0.75,
-        )
-
-        @tf.function
-        def run_mcmc():
-            return tfm.sample_chain(
-                num_results=n_mcmc,
-                num_burnin_steps=burn_in,
-                current_state=initial_state,
-                kernel=adaptive_kernel,
-                trace_fn=lambda _, pkr: pkr.inner_results.is_accepted,
-            )
-
-        samples, _ = run_mcmc()
-        samples = samples.numpy().astype(np.float32)
-        if not np.isfinite(samples).all():
-            raise FloatingPointError("Posterior z samples contain non-finite values.")
-        return samples
-
-    def _refine_x_given_z_samples(
-        self,
-        z_samples: np.ndarray,
-        x_obs: np.ndarray,
-        mask: np.ndarray,
-        x_map: np.ndarray,
-    ) -> np.ndarray:
-        """Refine ``x`` for each sampled ``z`` while keeping observed values fixed."""
-
-        sample_predictions = []
-        n_rows = x_obs.shape[0]
-        batch_size = min(self.params["batch_size"], n_rows)
-
-        for sample_idx in range(z_samples.shape[0]):
-            current_x = tf.Variable(np.array(x_map, copy=True).astype(np.float32), trainable=True)
-            current_z = tf.convert_to_tensor(z_samples[sample_idx].astype(np.float32), dtype=tf.float32)
-            x_optimizer = tf.keras.optimizers.Adam(self.params["lr_x"], beta_1=0.9, beta_2=0.99)
-
-            for _ in range(self.posterior_params["x_refine_steps_for_mcmc"]):
-                for start in range(0, n_rows, batch_size):
-                    stop = min(start + batch_size, n_rows)
-                    batch_indices = tf.convert_to_tensor(np.arange(start, stop), dtype=tf.int32)
-                    batch_x_obs = tf.convert_to_tensor(x_obs[start:stop], dtype=tf.float32)
-                    batch_mask = tf.convert_to_tensor(mask[start:stop], dtype=tf.float32)
-                    self._map_update_x(
-                        current_z,
-                        current_x,
-                        batch_indices,
-                        batch_x_obs,
-                        batch_mask,
-                        x_optimizer,
-                    )
-
-            sample_predictions.append(reconstruct_from_mask(x_obs, mask, current_x.numpy()))
-
-        sample_predictions = np.asarray(sample_predictions, dtype=np.float32)
-        if not np.isfinite(sample_predictions).all():
-            raise FloatingPointError("Posterior x samples contain non-finite values.")
-        return sample_predictions
 
     def _posterior_outputs_from_state(
         self,
@@ -581,28 +515,74 @@ class BGM_MNAR(BGM):
     ) -> dict:
         """Build MAP and MCMC imputations from the current completed state."""
 
-        # The MAP estimate is the completed matrix right before switching to MCMC.
-        x_imputed_map = reconstruct_from_mask(x_obs, mask, x_map)
+        x_imputed_map = reconstruct_from_mask(x_obs, mask, x_map).astype(np.float32)
 
-        # MCMC samples z and then refines the missing values conditionally.
-        posterior_z = self._sample_posterior_z(
-            x_full=x_imputed_map,
-            initial_z=z_map,
-            n_mcmc=n_mcmc,
-            burn_in=burn_in,
-            step_size=step_size,
-            num_leapfrog_steps=num_leapfrog_steps,
-            seed=seed,
-        )
-        sample_predictions = self._refine_x_given_z_samples(
-            z_samples=posterior_z,
-            x_obs=x_obs,
-            mask=mask,
-            x_map=x_map,
-        )
+        x_obs_tf = tf.convert_to_tensor(x_obs, dtype=tf.float32)
+        mask_tf = tf.convert_to_tensor(mask, dtype=tf.float32)
+        has_missing = bool(np.any(mask == 0.0))
+        n_rows = int(x_obs.shape[0])
+
+        z_state = tf.convert_to_tensor(z_map, dtype=tf.float32)
+        x_state = tf.convert_to_tensor(x_imputed_map, dtype=tf.float32)
+
+        def hmc_step(current_state, target_log_prob_fn, block_seed):
+            kernel = tfm.HamiltonianMonteCarlo(
+                target_log_prob_fn=target_log_prob_fn,
+                step_size=step_size,
+                num_leapfrog_steps=num_leapfrog_steps,
+            )
+            next_state, _ = tfm.sample_chain(
+                num_results=1,
+                num_burnin_steps=0,
+                current_state=current_state,
+                kernel=kernel,
+                trace_fn=lambda _, pkr: pkr.is_accepted,
+                seed=block_seed,
+            )
+            return next_state[0]
+
+        z_samples = []
+        x_samples = []
+        total_steps = burn_in + n_mcmc
+
+        for step in range(total_steps):
+            x_full_current = reconstruct_from_mask(x_obs_tf, mask_tf, x_state)
+
+            # Block 1: update all subject-specific latent states in parallel.
+            z_state = hmc_step(
+                z_state,
+                lambda z: self.get_log_posterior(z, x_full_current, None, None),
+                None if seed is None else seed + 2 * step,
+            )
+
+            # Block 2: update all subject-specific x states in parallel, then
+            # project the observed entries back to x_obs so only missing values move.
+            if has_missing:
+                x_state = hmc_step(
+                    x_state,
+                    lambda candidate_x: -(
+                        self._generator_nll(z_state, reconstruct_from_mask(x_obs_tf, mask_tf, candidate_x), training=False)[0]
+                        + self._mask_nll(reconstruct_from_mask(x_obs_tf, mask_tf, candidate_x), mask_tf, training=False)
+                    ),
+                    None if seed is None else seed + 2 * step + 1,
+                )
+                x_state = reconstruct_from_mask(x_obs_tf, mask_tf, x_state)
+                x_full_current = x_state
+            else:
+                x_full_current = x_imputed_map
+
+            if step >= burn_in:
+                z_samples.append(z_state.numpy().astype(np.float32))
+                x_samples.append(np.asarray(x_full_current, dtype=np.float32))
+
+        posterior_z = np.asarray(z_samples, dtype=np.float32)
+        sample_predictions = np.asarray(x_samples, dtype=np.float32)
+        if not np.isfinite(posterior_z).all():
+            raise FloatingPointError("Posterior z samples contain non-finite values.")
+        if not np.isfinite(sample_predictions).all():
+            raise FloatingPointError("Posterior x samples contain non-finite values.")
 
         x_imputed_mcmc = np.mean(sample_predictions, axis=0).astype(np.float32)
-        alpha = 0.05 if alpha is None else float(alpha)
         intervals = prediction_intervals_from_samples(sample_predictions, mask, alpha=alpha)
 
         outputs = {
@@ -620,6 +600,7 @@ class BGM_MNAR(BGM):
         data: np.ndarray,
         mask: Optional[np.ndarray] = None,
         x_true: Optional[np.ndarray] = None,
+        adapt: bool = False,
         alpha: float = 0.05,
         return_samples: bool = False,
         n_mcmc: int = 3000,
@@ -634,7 +615,7 @@ class BGM_MNAR(BGM):
         x_obs, resolved_mask = prepare_masked_data(
             data,
             mask=mask,
-            initialization="missforest"
+            initialization="mean"
         )
 
         if x_obs.shape[1] != self.params["x_dim"]:
@@ -642,15 +623,23 @@ class BGM_MNAR(BGM):
                 f"Expected feature dimension {self.params['x_dim']}, received {x_obs.shape[1]}."
             )
 
-        data_z, data_x = self._run_map_inference(
-            x_obs=x_obs,
-            mask=resolved_mask,
-            epochs=self.posterior_params["test_epochs"],
-            z_map_steps=self.posterior_params["test_z_map_steps"],
-            x_map_steps=self.posterior_params["test_x_map_steps"],
-            x_true=x_true,
-            verbose=verbose
-        )
+        if np.array_equal(np.asarray(data), np.asarray(self.train_data), equal_nan=True):
+            # Prediction data match training data; skipping MAP stage
+            data_z = self.data_z
+            data_x = self.data_x
+            self.inference_history_ = []
+        else:
+            # Prediction data differ from training data; running adaptation stage
+            data_z, data_x = self._run_map_inference(
+                x_obs=x_obs,
+                mask=resolved_mask,
+                epochs=self.posterior_params["test_epochs"],
+                z_map_steps=self.posterior_params["test_z_map_steps"],
+                x_map_steps=self.posterior_params["test_x_map_steps"],
+                x_true=x_true,
+                verbose=verbose,
+                adapt=adapt,
+            )
 
         # Then switch to MCMC for z and refine x conditionally for posterior summaries.
         outputs = self._posterior_outputs_from_state(

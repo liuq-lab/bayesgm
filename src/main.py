@@ -20,7 +20,7 @@ from sklearn.model_selection import train_test_split
 import tensorflow as tf
 gpu = tf.config.list_physical_devices('GPU')[0]
 tf.config.experimental.set_memory_growth(gpu, True)
-#tf.config.set_visible_devices([], 'GPU')  # 显式禁止使用 GPU
+tf.config.set_visible_devices([], 'GPU')  # 显式禁止使用 GPU
 
 def _fit_standardizer(data):
     mean = np.mean(data, axis=0, keepdims=True).astype(np.float32)
@@ -340,6 +340,7 @@ if __name__=="__main__":
 
         model = BGM_MNAR(params, random_seed=None)
         model.fit(data=data['x_obs'], mask=data['mask'], x_true=data['x_full'], verbose=1)
+        sys.exit()
         mcmc_imputed, intervals = model.predict(
             data=data['x_obs'],
             mask=data['mask'],
