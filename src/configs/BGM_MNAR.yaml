@@ -8,11 +8,11 @@ x_dim: 50
 z_dim: 5
 missing_rate: 0.1
 batch_size: 32
-epochs: 30
+epochs: 24
 epochs_per_eval: 2
 lr: 0.001
-lr_theta: 0.001
-lr_phi: 0.001
+lr_theta: 0.0005
+lr_phi: 0.0005
 lr_z: 0.001
 lr_x: 0.001
 gamma: 0.0
