@@ -36,7 +36,3 @@ posterior:
   test_z_map_steps: 10
   test_x_map_steps: 10
   clip_grad_norm: 25.0
-  x_clip_value: 8.0
-  x_refine_steps_for_mcmc: 1
-  z_update_mode: map
-  x_update_mode: map
