@@ -512,6 +512,7 @@ class BGM_MNAR(BGM):
         num_leapfrog_steps: Optional[int] = None,
         seed: Optional[int] = None,
         return_samples: bool = False,
+        verbose: int = 1,
     ) -> dict:
         """Build MAP and MCMC imputations from the current completed state."""
 
@@ -525,47 +526,113 @@ class BGM_MNAR(BGM):
         z_state = tf.convert_to_tensor(z_map, dtype=tf.float32)
         x_state = tf.convert_to_tensor(x_imputed_map, dtype=tf.float32)
 
-        def hmc_step(current_state, target_log_prob_fn, block_seed):
-            kernel = tfm.HamiltonianMonteCarlo(
+        num_adaptation_steps = max(0, int(0.8 * int(burn_in)))
+        target_accept_prob = 0.75
+
+        x_full_for_z = tf.Variable(
+            reconstruct_from_mask(x_obs_tf, mask_tf, x_state),
+            trainable=False,
+            dtype=tf.float32,
+        )
+        z_for_x = tf.Variable(z_state, trainable=False, dtype=tf.float32)
+
+        def z_target_log_prob_fn(candidate_z):
+            return self.get_log_posterior(candidate_z, x_full_for_z, None, None)
+
+        def x_target_log_prob_fn(candidate_x):
+            candidate_full = reconstruct_from_mask(x_obs_tf, mask_tf, candidate_x)
+            return -(
+                self._generator_nll(z_for_x, candidate_full, training=False)[0]
+                + self._mask_nll(candidate_full, mask_tf, training=False)
+            )
+
+        def make_adaptive_hmc_kernel(target_log_prob_fn):
+            hmc_kernel = tfm.HamiltonianMonteCarlo(
                 target_log_prob_fn=target_log_prob_fn,
                 step_size=step_size,
                 num_leapfrog_steps=num_leapfrog_steps,
             )
-            next_state, _ = tfm.sample_chain(
-                num_results=1,
-                num_burnin_steps=0,
-                current_state=current_state,
-                kernel=kernel,
-                trace_fn=lambda _, pkr: pkr.is_accepted,
-                seed=block_seed,
+            return tfm.SimpleStepSizeAdaptation(
+                inner_kernel=hmc_kernel,
+                num_adaptation_steps=num_adaptation_steps,
+                target_accept_prob=target_accept_prob,
             )
-            return next_state[0]
+
+        def refresh_conditional_results(kernel_results, current_state, target_log_prob_fn):
+            """Keep adaptive state but refresh HMC cache for the current Gibbs conditional."""
+
+            with tf.GradientTape() as tape:
+                tape.watch(current_state)
+                target_log_prob = target_log_prob_fn(current_state)
+            grads_target_log_prob = tape.gradient(target_log_prob, current_state)
+            if grads_target_log_prob is None:
+                raise FloatingPointError("Unable to compute HMC target-log-probability gradients.")
+
+            accepted_results = kernel_results.inner_results.accepted_results._replace(
+                log_acceptance_correction=tf.zeros_like(target_log_prob),
+                target_log_prob=target_log_prob,
+                grads_target_log_prob=[grads_target_log_prob],
+            )
+            proposed_results = kernel_results.inner_results.proposed_results._replace(
+                log_acceptance_correction=tf.zeros_like(target_log_prob),
+                target_log_prob=target_log_prob,
+                grads_target_log_prob=[grads_target_log_prob],
+            )
+            inner_results = kernel_results.inner_results._replace(
+                accepted_results=accepted_results,
+                log_accept_ratio=tf.zeros_like(target_log_prob),
+                proposed_state=current_state,
+                proposed_results=proposed_results,
+            )
+            return kernel_results._replace(inner_results=inner_results)
+
+        z_kernel = make_adaptive_hmc_kernel(z_target_log_prob_fn)
+        x_kernel = make_adaptive_hmc_kernel(x_target_log_prob_fn) if has_missing else None
+        z_kernel_results = z_kernel.bootstrap_results(z_state)
+        x_kernel_results = x_kernel.bootstrap_results(x_state) if has_missing else None
 
         z_samples = []
         x_samples = []
+        z_acceptance = []
+        x_acceptance = []
+        generator_mean_sum = np.zeros_like(x_imputed_map, dtype=np.float64)
+        retained_steps = 0
         total_steps = burn_in + n_mcmc
 
         for step in range(total_steps):
             x_full_current = reconstruct_from_mask(x_obs_tf, mask_tf, x_state)
+            x_full_for_z.assign(x_full_current)
 
             # Block 1: update all subject-specific latent states in parallel.
-            z_state = hmc_step(
+            z_kernel_results = refresh_conditional_results(
+                z_kernel_results,
                 z_state,
-                lambda z: self.get_log_posterior(z, x_full_current, None, None),
-                None if seed is None else seed + 2 * step,
+                z_target_log_prob_fn,
             )
+            z_state, z_kernel_results = z_kernel.one_step(
+                z_state,
+                z_kernel_results,
+                seed=None if seed is None else seed + 2 * step,
+            )
+            z_is_accepted = z_kernel_results.inner_results.is_accepted
+            z_acceptance.append(float(tf.reduce_mean(tf.cast(z_is_accepted, tf.float32)).numpy()))
 
             # Block 2: update all subject-specific x states in parallel, then
             # project the observed entries back to x_obs so only missing values move.
             if has_missing:
-                x_state = hmc_step(
+                z_for_x.assign(z_state)
+                x_kernel_results = refresh_conditional_results(
+                    x_kernel_results,
                     x_state,
-                    lambda candidate_x: -(
-                        self._generator_nll(z_state, reconstruct_from_mask(x_obs_tf, mask_tf, candidate_x), training=False)[0]
-                        + self._mask_nll(reconstruct_from_mask(x_obs_tf, mask_tf, candidate_x), mask_tf, training=False)
-                    ),
-                    None if seed is None else seed + 2 * step + 1,
+                    x_target_log_prob_fn,
                 )
+                x_state, x_kernel_results = x_kernel.one_step(
+                    x_state,
+                    x_kernel_results,
+                    seed=None if seed is None else seed + 2 * step + 1,
+                )
+                x_is_accepted = x_kernel_results.inner_results.is_accepted
+                x_acceptance.append(float(tf.reduce_mean(tf.cast(x_is_accepted, tf.float32)).numpy()))
                 x_state = reconstruct_from_mask(x_obs_tf, mask_tf, x_state)
                 x_full_current = x_state
             else:
@@ -574,6 +641,10 @@ class BGM_MNAR(BGM):
             if step >= burn_in:
                 z_samples.append(z_state.numpy().astype(np.float32))
                 x_samples.append(np.asarray(x_full_current, dtype=np.float32))
+                mu_x_state, _ = self.g_net(z_state, training=False)
+                generator_mean_full = reconstruct_from_mask(x_obs_tf, mask_tf, mu_x_state)
+                generator_mean_sum += generator_mean_full.numpy().astype(np.float64)
+                retained_steps += 1
 
         posterior_z = np.asarray(z_samples, dtype=np.float32)
         sample_predictions = np.asarray(x_samples, dtype=np.float32)
@@ -583,13 +654,48 @@ class BGM_MNAR(BGM):
             raise FloatingPointError("Posterior x samples contain non-finite values.")
 
         x_imputed_mcmc = np.mean(sample_predictions, axis=0).astype(np.float32)
+        x_imputed_mcmc_median = np.median(sample_predictions, axis=0).astype(np.float32)
+        x_imputed_mcmc_generator_mean = (generator_mean_sum / max(retained_steps, 1)).astype(np.float32)
+
         intervals = prediction_intervals_from_samples(sample_predictions, mask, alpha=alpha)
+        missing_mask = mask == 0.0
+        diagnostics = {
+            "z_acceptance_rate": float(np.mean(z_acceptance)) if z_acceptance else 0.0,
+            "z_acceptance_rate_last": float(z_acceptance[-1]) if z_acceptance else 0.0,
+            "x_acceptance_rate": float(np.mean(x_acceptance)) if x_acceptance else None,
+            "x_acceptance_rate_last": float(x_acceptance[-1]) if x_acceptance else None,
+            "x_sample_missing_std": float(np.std(sample_predictions[:, missing_mask])) if np.any(missing_mask) else 0.0,
+            "step_size": float(step_size),
+            "z_step_size_final": float(z_kernel_results.new_step_size.numpy()),
+            "x_step_size_final": float(x_kernel_results.new_step_size.numpy()) if x_kernel_results is not None else None,
+            "num_leapfrog_steps": int(num_leapfrog_steps),
+            "num_adaptation_steps": int(num_adaptation_steps),
+            "target_accept_prob": float(target_accept_prob),
+            "burn_in": int(burn_in),
+            "n_mcmc": int(n_mcmc),
+        }
+        if verbose:
+            print(
+                "MCMC diagnostics: z_accept={:.4f}, x_accept={}, step_size={} -> z_step_size_final={}, x_step_size_final={}, leapfrog={}, burn_in={}, n_mcmc={}".format(
+                    diagnostics["z_acceptance_rate"],
+                    "n/a" if diagnostics["x_acceptance_rate"] is None else f"{diagnostics['x_acceptance_rate']:.4f}",
+                    diagnostics["step_size"],
+                    diagnostics["z_step_size_final"],
+                    "n/a" if diagnostics["x_step_size_final"] is None else diagnostics["x_step_size_final"],
+                    diagnostics["num_leapfrog_steps"],
+                    diagnostics["burn_in"],
+                    diagnostics["n_mcmc"],
+                )
+            )
 
         outputs = {
             "map_imputed": x_imputed_map,
-            "mcmc_imputed": x_imputed_mcmc,
+            "mcmc_mean_imputed": x_imputed_mcmc,
+            "mcmc_median_imputed": x_imputed_mcmc_median,
+            "mcmc_generator_mean_imputed": x_imputed_mcmc_generator_mean,
             "intervals": intervals,
             "z_samples": posterior_z,
+            "mcmc_diagnostics": diagnostics,
         }
         if return_samples:
             outputs["x_samples"] = sample_predictions
@@ -610,7 +716,7 @@ class BGM_MNAR(BGM):
         seed: int = 42,
         verbose: int = 1,
     ):
-        """Impute incomplete data with MAP updates followed by MCMC over ``z``."""
+        """Impute incomplete data with MAP updates followed by MCMC over ``z`` and missing ``x``."""
 
         x_obs, resolved_mask = prepare_masked_data(
             data,
@@ -654,9 +760,10 @@ class BGM_MNAR(BGM):
             num_leapfrog_steps=num_leapfrog_steps,
             seed=seed,
             return_samples=return_samples,
+            verbose=verbose,
         )
 
         self.last_prediction_ = outputs
         if return_samples:
             return outputs["x_samples"], outputs["intervals"]
-        return outputs["mcmc_imputed"], outputs["intervals"]
+        return outputs["mcmc_mean_imputed"], outputs["intervals"]

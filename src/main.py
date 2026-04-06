@@ -340,16 +340,15 @@ if __name__=="__main__":
 
         model = BGM_MNAR(params, random_seed=None)
         model.fit(data=data['x_obs'], mask=data['mask'], x_true=data['x_full'], verbose=1)
-        sys.exit()
         mcmc_imputed, intervals = model.predict(
             data=data['x_obs'],
             mask=data['mask'],
             x_true=data['x_full'],
             alpha=0.05,
-            n_mcmc=2, 
-            burn_in=2, 
-            step_size=0.01, 
-            num_leapfrog_steps=1, 
+            n_mcmc=500, 
+            burn_in=500, 
+            step_size=0.1, 
+            num_leapfrog_steps=5, 
             seed=42,
             verbose=1
         )
